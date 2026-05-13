@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -191,6 +193,112 @@ func TestCleanKiroToolSyntaxTextParsesXMLFallback(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Equal(t, "Bash", calls[0].Name)
 	require.Equal(t, "pwd", calls[0].Input.(map[string]any)["command"])
+}
+
+func TestKiroToolNameMapsShortenAndRestore(t *testing.T) {
+	longName := "mcp__very_long_namespace__very_long_server_name__tool_with_a_name_far_beyond_sixty_four_characters"
+	maps := buildKiroToolNameMaps([]map[string]any{{
+		"name":         longName,
+		"description":  "desc",
+		"input_schema": map[string]any{"type": "object"},
+	}})
+
+	alias := kiroToolNameToKiro(longName, maps)
+	require.NotEqual(t, longName, alias)
+	require.LessOrEqual(t, len(alias), kiroMaxToolNameLength)
+	require.Equal(t, longName, restoreKiroToolName(alias, maps))
+}
+
+func TestBuildKiroPayloadShortensToolNamesForKiro(t *testing.T) {
+	longName := "mcp__very_long_namespace__very_long_server_name__tool_with_a_name_far_beyond_sixty_four_characters"
+	payload := buildKiroPayload("claude-sonnet-4.5", "", []map[string]any{
+		{"role": "user", "content": "run it"},
+	}, []map[string]any{{
+		"name":         longName,
+		"description":  "Run something",
+		"input_schema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}}, nil)
+
+	state := payload["conversationState"].(map[string]any)
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	context := current["userInputMessageContext"].(map[string]any)
+	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any)
+	alias := tool["name"].(string)
+
+	require.LessOrEqual(t, len(alias), kiroMaxToolNameLength)
+	require.NotEqual(t, longName, alias)
+}
+
+func TestBuildKiroPayloadAppliesAnthropicThinkingPrefixAndHistoryThinking(t *testing.T) {
+	payload := buildKiroPayloadWithThinking("claude-sonnet-4.5", "system note", []map[string]any{
+		{"role": "assistant", "content": []any{
+			map[string]any{"type": "thinking", "thinking": "private plan"},
+			map[string]any{"type": "text", "text": "visible answer"},
+		}},
+		{"role": "user", "content": "continue"},
+	}, nil, &anthropicThinkingInput{Type: "adaptive", Effort: "medium"}, nil)
+
+	state := payload["conversationState"].(map[string]any)
+	history := state["history"].([]any)
+	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any)
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+
+	require.Equal(t, "<thinking>private plan</thinking>\n\nvisible answer", assistant["content"])
+	require.Contains(t, current["content"], "<thinking_mode>adaptive</thinking_mode><thinking_effort>medium</thinking_effort>")
+	require.Contains(t, current["content"], "continue")
+}
+
+func TestKiroTextToAnthropicBlocksParsesThinkingTags(t *testing.T) {
+	blocks := kiroTextToAnthropicBlocks("<thinking>\nprivate plan</thinking>\n\nvisible answer")
+
+	require.Len(t, blocks, 2)
+	require.Equal(t, "thinking", blocks[0]["type"])
+	require.Equal(t, "private plan", blocks[0]["thinking"])
+	require.Equal(t, "text", blocks[1]["type"])
+	require.Equal(t, "visible answer", blocks[1]["text"])
+}
+
+func TestRestoreKiroToolCallsRestoresOriginalNames(t *testing.T) {
+	longName := "mcp__very_long_namespace__very_long_server_name__tool_with_a_name_far_beyond_sixty_four_characters"
+	maps := buildKiroToolNameMaps([]map[string]any{{
+		"name":         longName,
+		"description":  "desc",
+		"input_schema": map[string]any{"type": "object"},
+	}})
+
+	alias := kiroToolNameToKiro(longName, maps)
+	restored := restoreKiroToolCalls([]kiroToolCall{{
+		ID:    "toolu_1",
+		Name:  alias,
+		Input: map[string]any{"command": "ls"},
+	}}, maps)
+
+	require.Equal(t, longName, restored[0].Name)
+}
+
+func TestStreamKiroToAnthropicNormalizesThinkingAndToolUse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	streamKiroToAnthropic(
+		c,
+		strings.NewReader("<thinking>private plan</thinking>\n\n<tool_use><name>Bash</name><input>{\"command\":\"pwd\"}</input></tool_use>"),
+		"text/plain",
+		"claude-sonnet-4-5",
+		nil,
+		&anthropicThinkingInput{Type: "enabled", BudgetTokens: 4096},
+	)
+
+	body := rec.Body.String()
+	require.Contains(t, body, "event: message_start")
+	require.Contains(t, body, `"type":"thinking"`)
+	require.Contains(t, body, `"type":"thinking_delta"`)
+	require.Contains(t, body, `"type":"tool_use"`)
+	require.Contains(t, body, `"partial_json"`)
+	require.Contains(t, body, "pwd")
+	require.Contains(t, body, `"stop_reason":"tool_use"`)
+	require.NotContains(t, body, "<tool_use>")
 }
 
 func TestKiroResolveModelAliases(t *testing.T) {
