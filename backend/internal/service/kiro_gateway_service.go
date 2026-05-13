@@ -1854,10 +1854,10 @@ func collectKiroContent(r io.Reader, contentType string) string {
 
 func collectKiroResult(r io.Reader, contentType string, toolNameMaps *kiroToolNameMaps) (string, []kiroToolCall) {
 	parser := &kiroStreamParser{}
-	if isKiroEventStream(contentType) {
-		return collectKiroEventStreamResult(r, parser, toolNameMaps)
-	}
 	reader := bufio.NewReader(r)
+	if isLikelyKiroEventStream(contentType, reader) {
+		return collectKiroEventStreamResult(reader, parser, toolNameMaps)
+	}
 	var b strings.Builder
 	acc := &kiroToolAccumulator{}
 	buf := make([]byte, 32*1024)
@@ -1916,6 +1916,29 @@ func isKiroEventStream(contentType string) bool {
 	return strings.Contains(strings.ToLower(contentType), "application/vnd.amazon.eventstream")
 }
 
+func isLikelyKiroEventStream(contentType string, reader *bufio.Reader) bool {
+	if isKiroEventStream(contentType) {
+		return true
+	}
+	if reader == nil {
+		return false
+	}
+	peek, err := reader.Peek(512)
+	if len(peek) == 0 {
+		return false
+	}
+	if bytes.Contains(peek, []byte(":event-type")) ||
+		bytes.Contains(peek, []byte(":message-type")) ||
+		bytes.Contains(peek, []byte("contextUsageEvent")) ||
+		bytes.Contains(peek, []byte("meteringEvent")) {
+		return true
+	}
+	if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
+		return false
+	}
+	return false
+}
+
 func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model string, toolNameMaps *kiroToolNameMaps) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -1928,6 +1951,7 @@ func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model s
 	toolIndex := -1
 	acc := &kiroToolAccumulator{}
 	finishReason := "stop"
+	reader := bufio.NewReader(r)
 	emitEvent := func(event kiroResponseEvent) {
 		switch event.Type {
 		case "content":
@@ -1985,8 +2009,8 @@ func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model s
 			flusher.Flush()
 		}
 	}
-	if isKiroEventStream(contentType) {
-		streamKiroEventStreamEvents(c, r, parser, func(event kiroResponseEvent) {
+	if isLikelyKiroEventStream(contentType, reader) {
+		streamKiroEventStreamEvents(c, reader, parser, func(event kiroResponseEvent) {
 			emitEvent(event)
 		})
 		writeSSEData(c, gin.H{
@@ -2001,7 +2025,7 @@ func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model s
 	}
 	buf := make([]byte, 16*1024)
 	for {
-		n, err := r.Read(buf)
+		n, err := reader.Read(buf)
 		if n > 0 {
 			for _, event := range parser.feedEvents(buf[:n]) {
 				emitEvent(event)

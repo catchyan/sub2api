@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +13,40 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func buildKiroEventStreamFrame(eventType string, payload []byte) []byte {
+	crc32IeeeTab := crc32.MakeTable(crc32.IEEE)
+	var headersBuf bytes.Buffer
+	_ = headersBuf.WriteByte(byte(len(":event-type")))
+	_, _ = headersBuf.WriteString(":event-type")
+	_ = headersBuf.WriteByte(7)
+	_ = binary.Write(&headersBuf, binary.BigEndian, uint16(len(eventType)))
+	_, _ = headersBuf.WriteString(eventType)
+	_ = headersBuf.WriteByte(byte(len(":message-type")))
+	_, _ = headersBuf.WriteString(":message-type")
+	_ = headersBuf.WriteByte(7)
+	_ = binary.Write(&headersBuf, binary.BigEndian, uint16(len("event")))
+	_, _ = headersBuf.WriteString("event")
+
+	headers := headersBuf.Bytes()
+	headersLen := uint32(len(headers))
+	totalLen := uint32(12 + len(headers) + len(payload) + 4)
+
+	var preludeBuf bytes.Buffer
+	_ = binary.Write(&preludeBuf, binary.BigEndian, totalLen)
+	_ = binary.Write(&preludeBuf, binary.BigEndian, headersLen)
+	preludeBytes := preludeBuf.Bytes()
+	preludeCRC := crc32.Checksum(preludeBytes, crc32IeeeTab)
+
+	var frame bytes.Buffer
+	_, _ = frame.Write(preludeBytes)
+	_ = binary.Write(&frame, binary.BigEndian, preludeCRC)
+	_, _ = frame.Write(headers)
+	_, _ = frame.Write(payload)
+	messageCRC := crc32.Checksum(frame.Bytes(), crc32IeeeTab)
+	_ = binary.Write(&frame, binary.BigEndian, messageCRC)
+	return frame.Bytes()
+}
 
 type kiroHydrationCacheStub struct {
 	snapshot []*Account
@@ -299,6 +336,29 @@ func TestStreamKiroToAnthropicNormalizesThinkingAndToolUse(t *testing.T) {
 	require.Contains(t, body, "pwd")
 	require.Contains(t, body, `"stop_reason":"tool_use"`)
 	require.NotContains(t, body, "<tool_use>")
+}
+
+func TestCollectKiroResultSniffsEventStreamWithoutContentType(t *testing.T) {
+	frame := buildKiroEventStreamFrame("chunk", []byte(`{"content":"hello"}`))
+
+	content, calls := collectKiroResult(bytes.NewReader(frame), "application/octet-stream", nil)
+
+	require.Equal(t, "hello", content)
+	require.Empty(t, calls)
+}
+
+func TestStreamKiroToOpenAISniffsEventStreamWithoutContentType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	frame := buildKiroEventStreamFrame("chunk", []byte(`{"content":"hello"}`))
+
+	streamKiroToOpenAI(c, bytes.NewReader(frame), "application/octet-stream", "claude-sonnet-4-5", nil)
+
+	body := rec.Body.String()
+	require.Contains(t, body, `"content":"hello"`)
+	require.NotContains(t, body, ":event-type")
+	require.NotContains(t, body, "contextUsageEvent")
 }
 
 func TestKiroResolveModelAliases(t *testing.T) {
