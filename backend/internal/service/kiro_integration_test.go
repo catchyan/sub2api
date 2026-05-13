@@ -347,6 +347,39 @@ func TestCollectKiroResultSniffsEventStreamWithoutContentType(t *testing.T) {
 	require.Empty(t, calls)
 }
 
+func TestCollectKiroResultParsesKiroEventTypes(t *testing.T) {
+	var stream bytes.Buffer
+	stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"before "}`)))
+	stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
+	stream.Write(buildKiroEventStreamFrame("contextUsageEvent", []byte(`{"contextUsagePercentage":3.03}`)))
+
+	content, calls := collectKiroResult(bytes.NewReader(stream.Bytes()), "application/octet-stream", nil)
+
+	require.Equal(t, "before", content)
+	require.Len(t, calls, 1)
+	require.Equal(t, "toolu_1", calls[0].ID)
+	require.Equal(t, "Glob", calls[0].Name)
+	require.Equal(t, "*", calls[0].Input.(map[string]any)["pattern"])
+}
+
+func TestStreamKiroToAnthropicParsesKiroToolUseEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	var stream bytes.Buffer
+	stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"I will inspect it."}`)))
+	stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
+
+	streamKiroToAnthropic(c, bytes.NewReader(stream.Bytes()), "application/octet-stream", "claude-sonnet-4-5", nil, nil)
+
+	body := rec.Body.String()
+	require.Contains(t, body, `"type":"tool_use"`)
+	require.Contains(t, body, `"name":"Glob"`)
+	require.Contains(t, body, `"partial_json":"{\"pattern\":\"*\"}"`)
+	require.NotContains(t, body, ":event-type")
+	require.NotContains(t, body, "toolUseEvent")
+}
+
 func TestStreamKiroToOpenAISniffsEventStreamWithoutContentType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

@@ -241,6 +241,13 @@ type bedrockEventStreamDecoder struct {
 	reader *bufio.Reader
 }
 
+type eventStreamMessage struct {
+	EventType     string
+	MessageType   string
+	ExceptionType string
+	Payload       []byte
+}
+
 func newBedrockEventStreamDecoder(r io.Reader) *bedrockEventStreamDecoder {
 	return &bedrockEventStreamDecoder{
 		reader: bufio.NewReaderSize(r, 64*1024),
@@ -322,6 +329,65 @@ func (d *bedrockEventStreamDecoder) Decode() ([]byte, error) {
 //	[name_length: 1 byte][name: variable][value_type: 1 byte][value: variable]
 //
 // value_type = 7 表示 string 类型，前 2 bytes 为长度
+func (d *bedrockEventStreamDecoder) DecodeMessage() (*eventStreamMessage, error) {
+	for {
+		prelude := make([]byte, 12)
+		if _, err := io.ReadFull(d.reader, prelude); err != nil {
+			return nil, err
+		}
+
+		preludeCRC := bedrockReadUint32(prelude[8:12])
+		if crc32.Checksum(prelude[0:8], crc32IEEETable) != preludeCRC {
+			return nil, fmt.Errorf("eventstream prelude CRC mismatch")
+		}
+
+		totalLength := bedrockReadUint32(prelude[0:4])
+		headersLength := bedrockReadUint32(prelude[4:8])
+		if totalLength < 16 {
+			return nil, fmt.Errorf("invalid eventstream frame: total_length=%d", totalLength)
+		}
+		if headersLength > totalLength-16 {
+			return nil, fmt.Errorf("invalid eventstream frame: headers_length=%d total_length=%d", headersLength, totalLength)
+		}
+
+		remaining := int(totalLength) - 12
+		if remaining <= 0 {
+			continue
+		}
+		data := make([]byte, remaining)
+		if _, err := io.ReadFull(d.reader, data); err != nil {
+			return nil, err
+		}
+
+		messageCRC := bedrockReadUint32(data[len(data)-4:])
+		h := crc32.New(crc32IEEETable)
+		_, _ = h.Write(prelude)
+		_, _ = h.Write(data[:len(data)-4])
+		if h.Sum32() != messageCRC {
+			return nil, fmt.Errorf("eventstream message CRC mismatch")
+		}
+
+		headers := data[:headersLength]
+		payload := data[headersLength : len(data)-4]
+		eventType := extractEventStreamHeaderValue(headers, ":event-type")
+		messageType := extractEventStreamHeaderValue(headers, ":message-type")
+		exceptionType := extractEventStreamHeaderValue(headers, ":exception-type")
+		if exceptionType != "" {
+			return nil, fmt.Errorf("bedrock exception: %s: %s", exceptionType, string(payload))
+		}
+		if messageType == "exception" || messageType == "error" {
+			return nil, fmt.Errorf("bedrock error: %s", string(payload))
+		}
+
+		return &eventStreamMessage{
+			EventType:     eventType,
+			MessageType:   messageType,
+			ExceptionType: exceptionType,
+			Payload:       payload,
+		}, nil
+	}
+}
+
 func extractEventStreamHeaderValue(headers []byte, targetName string) string {
 	pos := 0
 	for pos < len(headers) {

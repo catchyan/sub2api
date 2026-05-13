@@ -1852,6 +1852,22 @@ func collectKiroContent(r io.Reader, contentType string) string {
 	return content
 }
 
+func decodeKiroEventStreamPayload(decoder *bedrockEventStreamDecoder) ([]byte, error) {
+	for {
+		msg, err := decoder.DecodeMessage()
+		if err != nil {
+			return nil, err
+		}
+		if len(bytes.TrimSpace(msg.Payload)) == 0 {
+			continue
+		}
+		if decoded := extractBedrockChunkData(msg.Payload); decoded != nil {
+			return decoded, nil
+		}
+		return msg.Payload, nil
+	}
+}
+
 func collectKiroResult(r io.Reader, contentType string, toolNameMaps *kiroToolNameMaps) (string, []kiroToolCall) {
 	parser := &kiroStreamParser{}
 	reader := bufio.NewReader(r)
@@ -1865,7 +1881,7 @@ func collectKiroResult(r io.Reader, contentType string, toolNameMaps *kiroToolNa
 		n, err := reader.Read(buf)
 		if n > 0 {
 			events := parser.feedEvents(buf[:n])
-			if len(events) == 0 {
+			if len(events) == 0 && !looksLikeKiroEventStreamBytes(buf[:n]) {
 				b.Write(buf[:n])
 			}
 			for _, event := range events {
@@ -1895,7 +1911,7 @@ func collectKiroEventStreamResult(r io.Reader, parser *kiroStreamParser, toolNam
 	var b strings.Builder
 	acc := &kiroToolAccumulator{}
 	for {
-		payload, err := decoder.Decode()
+		payload, err := decodeKiroEventStreamPayload(decoder)
 		if err != nil {
 			break
 		}
@@ -1927,6 +1943,9 @@ func isLikelyKiroEventStream(contentType string, reader *bufio.Reader) bool {
 	if len(peek) == 0 {
 		return false
 	}
+	if looksLikeKiroEventStreamBytes(peek) {
+		return true
+	}
 	if bytes.Contains(peek, []byte(":event-type")) ||
 		bytes.Contains(peek, []byte(":message-type")) ||
 		bytes.Contains(peek, []byte("contextUsageEvent")) ||
@@ -1937,6 +1956,21 @@ func isLikelyKiroEventStream(contentType string, reader *bufio.Reader) bool {
 		return false
 	}
 	return false
+}
+
+func looksLikeKiroEventStreamBytes(data []byte) bool {
+	if len(data) >= 12 {
+		totalLength := bedrockReadUint32(data[0:4])
+		headersLength := bedrockReadUint32(data[4:8])
+		if totalLength >= 16 && totalLength <= 64*1024*1024 && headersLength <= totalLength-16 {
+			return true
+		}
+	}
+	return bytes.Contains(data, []byte(":event-type")) ||
+		bytes.Contains(data, []byte(":message-type")) ||
+		bytes.Contains(data, []byte("toolUseEvent")) ||
+		bytes.Contains(data, []byte("contextUsageEvent")) ||
+		bytes.Contains(data, []byte("meteringEvent"))
 }
 
 func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model string, toolNameMaps *kiroToolNameMaps) {
@@ -2121,7 +2155,7 @@ func streamKiroEventStream(c *gin.Context, r io.Reader, parser *kiroStreamParser
 func streamKiroEventStreamEvents(c *gin.Context, r io.Reader, parser *kiroStreamParser, emit func(event kiroResponseEvent)) {
 	decoder := newBedrockEventStreamDecoder(r)
 	for {
-		payload, err := decoder.Decode()
+		payload, err := decodeKiroEventStreamPayload(decoder)
 		if err != nil {
 			return
 		}
