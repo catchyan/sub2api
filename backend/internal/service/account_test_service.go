@@ -220,7 +220,7 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, "Kiro token provider is not configured")
 	}
 	gateway := NewKiroGatewayService(s.accountRepo, nil, s.kiroTokenProvider, s.httpUpstream)
-	payload := buildKiroPayload(testModelID, "", []map[string]any{{"role": "user", "content": testPrompt}}, account)
+	payload := buildKiroPayload(testModelID, "", []map[string]any{{"role": "user", "content": testPrompt}}, nil, account)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	resp, err := gateway.callGenerate(ctx, account, payload)

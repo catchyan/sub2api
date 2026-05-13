@@ -107,7 +107,7 @@ func TestBuildKiroPayloadAlternatesAndKeepsImages(t *testing.T) {
 			map[string]any{"type": "image_url", "image_url": map[string]any{"url": imageData}},
 		}},
 		{"role": "user", "content": "second user"},
-	}, nil)
+	}, nil, nil)
 
 	state := payload["conversationState"].(map[string]any)
 	history := state["history"].([]any)
@@ -124,6 +124,73 @@ func TestBuildKiroPayloadAlternatesAndKeepsImages(t *testing.T) {
 	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
 	require.Equal(t, "auto", current["modelId"])
 	require.Equal(t, "system note\n\nsecond user", current["content"])
+}
+
+func TestBuildKiroPayloadIncludesToolContext(t *testing.T) {
+	payload := buildKiroPayload("claude-sonnet-4.5", "", []map[string]any{
+		{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+		}},
+	}, []map[string]any{
+		{
+			"name":         "Bash",
+			"description":  "Run a shell command.",
+			"input_schema": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}}},
+		},
+	}, nil)
+
+	state := payload["conversationState"].(map[string]any)
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	context := current["userInputMessageContext"].(map[string]any)
+
+	require.Equal(t, "Tool results provided.", current["content"])
+	require.Len(t, context["toolResults"], 1)
+	require.Len(t, context["tools"], 1)
+
+	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any)
+	require.Equal(t, "Bash", tool["name"])
+}
+
+func TestNormalizeKiroMessagesKeepsAssistantToolUsesStructured(t *testing.T) {
+	payload := buildKiroPayload("claude-sonnet-4.5", "", []map[string]any{
+		{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+		}},
+		{"role": "user", "content": "done"},
+	}, nil, nil)
+
+	state := payload["conversationState"].(map[string]any)
+	history := state["history"].([]any)
+	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any)
+	toolUses := assistant["toolUses"].([]map[string]any)
+
+	require.Equal(t, "Bash", toolUses[0]["name"])
+	require.Equal(t, "toolu_1", toolUses[0]["toolUseId"])
+	require.NotContains(t, assistant["content"], "tool_use")
+}
+
+func TestKiroToolEventsBecomeParsedToolCalls(t *testing.T) {
+	parser := &kiroStreamParser{}
+	acc := &kiroToolAccumulator{}
+
+	for _, event := range parser.feedPayloadEvents([]byte(`{"name":"Bash","toolUseId":"toolu_1","input":"{\"command\":\"ls\"}","stop":true}`)) {
+		acc.handle(event)
+	}
+	acc.finish()
+
+	require.Len(t, acc.calls, 1)
+	require.Equal(t, "toolu_1", acc.calls[0].ID)
+	require.Equal(t, "Bash", acc.calls[0].Name)
+	require.Equal(t, "ls", acc.calls[0].Input.(map[string]any)["command"])
+}
+
+func TestCleanKiroToolSyntaxTextParsesXMLFallback(t *testing.T) {
+	content, calls := cleanKiroToolSyntaxText(`before <tool_use><name>Bash</name><input>{"command":"pwd"}</input></tool_use> after`, nil)
+
+	require.Equal(t, "before  after", content)
+	require.Len(t, calls, 1)
+	require.Equal(t, "Bash", calls[0].Name)
+	require.Equal(t, "pwd", calls[0].Input.(map[string]any)["command"])
 }
 
 func TestKiroResolveModelAliases(t *testing.T) {
