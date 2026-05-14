@@ -258,11 +258,19 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerTokenPriority: 0.3e-6,
 		SupportsCacheBreakdown:         false,
 	}
+
+	// Kiro 模型（通过 AWS Q/Kiro 通道，按对应 Claude 模型定价）
+	s.fallbackPrices["auto-kiro"] = s.fallbackPrices["claude-sonnet-4"]
 }
 
 // getFallbackPricing 根据模型系列获取回退价格
 func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	modelLower := strings.ToLower(model)
+
+	// 精确匹配优先（Kiro 等非标准命名模型）
+	if p, ok := s.fallbackPrices[modelLower]; ok {
+		return p
+	}
 
 	// 按模型系列匹配
 	if strings.Contains(modelLower, "opus") {

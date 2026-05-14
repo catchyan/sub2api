@@ -77,6 +77,17 @@ type kiroToolNameMaps struct {
 	originalToAlias map[string]string
 }
 
+// KiroForwardResult holds the result of a Kiro forward operation for billing purposes.
+type KiroForwardResult struct {
+	Model        string
+	Account      *Account
+	InputTokens  int
+	OutputTokens int
+	Stream       bool
+	Duration     time.Duration
+	RequestID    string
+}
+
 type KiroGatewayService struct {
 	accountRepo       AccountRepository
 	schedulerSnapshot *SchedulerSnapshotService
@@ -124,96 +135,126 @@ func (s *KiroGatewayService) ListModels(ctx context.Context, groupID *int64) ([]
 	return out, nil
 }
 
-func (s *KiroGatewayService) ForwardOpenAIChat(ctx context.Context, c *gin.Context, body []byte) error {
+func (s *KiroGatewayService) ForwardOpenAIChat(ctx context.Context, c *gin.Context, body []byte) (*KiroForwardResult, error) {
+	startTime := time.Now()
 	var req openAIChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return writeOpenAIError(c, http.StatusBadRequest, "invalid_request_error", "invalid request body")
+		return nil, writeOpenAIError(c, http.StatusBadRequest, "invalid_request_error", "invalid request body")
 	}
 	if strings.TrimSpace(req.Model) == "" {
-		return writeOpenAIError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return nil, writeOpenAIError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 	}
 	toolNameMaps := buildKiroToolNameMaps(req.Tools)
-	resp, err := s.callGenerateAcrossAccounts(ctx, groupIDFromContext(c), func(account *Account) (map[string]any, error) {
+	resp, account, err := s.callGenerateAcrossAccounts(ctx, groupIDFromContext(c), func(account *Account) (map[string]any, error) {
 		return buildKiroPayloadFromOpenAI(req, account)
 	})
 	if err != nil {
-		return writeOpenAIError(c, http.StatusBadGateway, "api_error", err.Error())
+		return nil, writeOpenAIError(c, http.StatusBadGateway, "api_error", err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return writeOpenAIError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
+		return nil, writeOpenAIError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
 	}
+
+	inputTokens := estimateKiroInputTokens(body)
+	var outputTokens int
+
 	if req.Stream {
-		streamKiroToOpenAI(c, resp.Body, resp.Header.Get("Content-Type"), req.Model, toolNameMaps)
-		return nil
-	}
-	content, toolCalls := collectKiroResult(resp.Body, resp.Header.Get("Content-Type"), toolNameMaps)
-	message := gin.H{
-		"role":    "assistant",
-		"content": content,
-	}
-	finishReason := "stop"
-	if len(toolCalls) > 0 {
-		message["content"] = nil
-		if strings.TrimSpace(content) != "" {
-			message["content"] = content
+		outputTokens = streamKiroToOpenAIWithCount(c, resp.Body, resp.Header.Get("Content-Type"), req.Model, toolNameMaps)
+	} else {
+		content, toolCalls := collectKiroResult(resp.Body, resp.Header.Get("Content-Type"), toolNameMaps)
+		outputTokens = estimateKiroOutputTokens(content, toolCalls)
+		message := gin.H{
+			"role":    "assistant",
+			"content": content,
 		}
-		message["tool_calls"] = kiroToolCallsToOpenAI(toolCalls, toolNameMaps)
-		finishReason = "tool_calls"
+		finishReason := "stop"
+		if len(toolCalls) > 0 {
+			message["content"] = nil
+			if strings.TrimSpace(content) != "" {
+				message["content"] = content
+			}
+			message["tool_calls"] = kiroToolCallsToOpenAI(toolCalls, toolNameMaps)
+			finishReason = "tool_calls"
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"id":      "chatcmpl-" + uuid.NewString(),
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   req.Model,
+			"choices": []gin.H{{
+				"index":         0,
+				"message":       message,
+				"finish_reason": finishReason,
+			}},
+			"usage": gin.H{"prompt_tokens": inputTokens, "completion_tokens": outputTokens, "total_tokens": inputTokens + outputTokens},
+		})
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"id":      "chatcmpl-" + uuid.NewString(),
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   req.Model,
-		"choices": []gin.H{{
-			"index":         0,
-			"message":       message,
-			"finish_reason": finishReason,
-		}},
-		"usage": gin.H{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-	})
-	return nil
+
+	return &KiroForwardResult{
+		Model:        req.Model,
+		Account:      account,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Stream:       req.Stream,
+		Duration:     time.Since(startTime),
+		RequestID:    resp.Header.Get("X-Amzn-Requestid"),
+	}, nil
 }
 
-func (s *KiroGatewayService) ForwardAnthropicMessages(ctx context.Context, c *gin.Context, body []byte) error {
+func (s *KiroGatewayService) ForwardAnthropicMessages(ctx context.Context, c *gin.Context, body []byte) (*KiroForwardResult, error) {
+	startTime := time.Now()
 	var req anthropicMessagesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return writeKiroAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "invalid request body")
+		return nil, writeKiroAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "invalid request body")
 	}
 	if strings.TrimSpace(req.Model) == "" {
-		return writeKiroAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return nil, writeKiroAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 	}
 	toolNameMaps := buildKiroToolNameMaps(req.Tools)
-	resp, err := s.callGenerateAcrossAccounts(ctx, groupIDFromContext(c), func(account *Account) (map[string]any, error) {
+	resp, account, err := s.callGenerateAcrossAccounts(ctx, groupIDFromContext(c), func(account *Account) (map[string]any, error) {
 		return buildKiroPayloadFromAnthropic(req, account)
 	})
 	if err != nil {
-		return writeKiroAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
+		return nil, writeKiroAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return writeKiroAnthropicError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
+		return nil, writeKiroAnthropicError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
 	}
+
+	inputTokens := estimateKiroInputTokens(body)
+	var outputTokens int
+
 	if req.Stream {
-		streamKiroToAnthropic(c, resp.Body, resp.Header.Get("Content-Type"), req.Model, toolNameMaps, req.Thinking)
-		return nil
+		outputTokens = streamKiroToAnthropicWithCount(c, resp.Body, resp.Header.Get("Content-Type"), req.Model, toolNameMaps, req.Thinking)
+	} else {
+		content, toolCalls := collectKiroResult(resp.Body, resp.Header.Get("Content-Type"), toolNameMaps)
+		outputTokens = estimateKiroOutputTokens(content, toolCalls)
+		contentBlocks, stopReason := kiroAnthropicContentBlocks(content, toolCalls, kiroThinkingRequested(req.Thinking))
+		c.JSON(http.StatusOK, gin.H{
+			"id":            "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24],
+			"type":          "message",
+			"role":          "assistant",
+			"model":         req.Model,
+			"content":       contentBlocks,
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+			"usage":         gin.H{"input_tokens": inputTokens, "output_tokens": outputTokens},
+		})
 	}
-	content, toolCalls := collectKiroResult(resp.Body, resp.Header.Get("Content-Type"), toolNameMaps)
-	contentBlocks, stopReason := kiroAnthropicContentBlocks(content, toolCalls, kiroThinkingRequested(req.Thinking))
-	c.JSON(http.StatusOK, gin.H{
-		"id":            "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24],
-		"type":          "message",
-		"role":          "assistant",
-		"model":         req.Model,
-		"content":       contentBlocks,
-		"stop_reason":   stopReason,
-		"stop_sequence": nil,
-		"usage":         gin.H{"input_tokens": 0, "output_tokens": 0},
-	})
-	return nil
+
+	return &KiroForwardResult{
+		Model:        req.Model,
+		Account:      account,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Stream:       req.Stream,
+		Duration:     time.Since(startTime),
+		RequestID:    resp.Header.Get("X-Amzn-Requestid"),
+	}, nil
 }
 
 func (s *KiroGatewayService) CountTokens(c *gin.Context) {
@@ -313,13 +354,13 @@ func (s *KiroGatewayService) callGenerate(ctx context.Context, account *Account,
 
 type kiroPayloadBuilder func(account *Account) (map[string]any, error)
 
-func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, groupID *int64, buildPayload kiroPayloadBuilder) (*http.Response, error) {
+func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, groupID *int64, buildPayload kiroPayloadBuilder) (*http.Response, *Account, error) {
 	accounts, err := s.listAccounts(ctx, groupID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(accounts) == 0 {
-		return nil, errors.New("no schedulable kiro accounts")
+		return nil, nil, errors.New("no schedulable kiro accounts")
 	}
 
 	var lastErr error
@@ -327,7 +368,7 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 		account := &accounts[i]
 		payload, err := buildPayload(account)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		resp, err := s.callGenerate(ctx, account, payload)
 		if err != nil {
@@ -344,18 +385,18 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 			}
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return resp, nil
+			return resp, account, nil
 		}
 		if isKiroRecoverableStatus(resp.StatusCode) && i < len(accounts)-1 {
 			resp.Body.Close()
 			continue
 		}
-		return resp, nil
+		return resp, account, nil
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, nil, lastErr
 	}
-	return nil, errors.New("no schedulable kiro accounts")
+	return nil, nil, errors.New("no schedulable kiro accounts")
 }
 
 func (s *KiroGatewayService) selectAccount(ctx context.Context, groupID *int64) (*Account, error) {
@@ -1126,6 +1167,30 @@ func extractOpenAIToolCalls(v any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func estimateKiroOutputTokens(content string, toolCalls []kiroToolCall) int {
+	runes := len([]rune(content))
+	for _, tc := range toolCalls {
+		runes += len([]rune(tc.Name))
+		if input, ok := tc.Input.(string); ok {
+			runes += len([]rune(input))
+		} else {
+			b, _ := json.Marshal(tc.Input)
+			runes += len([]rune(string(b)))
+		}
+	}
+	if runes == 0 {
+		return 1
+	}
+	estimated := runes / 4
+	if runes%4 != 0 {
+		estimated++
+	}
+	if estimated < 1 {
+		return 1
+	}
+	return estimated
 }
 
 func estimateKiroInputTokens(body []byte) int {
@@ -2079,6 +2144,124 @@ func streamKiroToOpenAI(c *gin.Context, r io.Reader, contentType string, model s
 	}
 }
 
+func streamKiroToOpenAIWithCount(c *gin.Context, r io.Reader, contentType string, model string, toolNameMaps *kiroToolNameMaps) int {
+	var outputRunes int
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Status(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+	id := "chatcmpl-" + uuid.NewString()
+	created := time.Now().Unix()
+	parser := &kiroStreamParser{}
+	first := true
+	toolIndex := -1
+	acc := &kiroToolAccumulator{}
+	finishReason := "stop"
+	reader := bufio.NewReader(r)
+	emitEvent := func(event kiroResponseEvent) {
+		switch event.Type {
+		case "content":
+			outputRunes += len([]rune(event.Content))
+			delta := gin.H{"content": event.Content}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			writeSSEData(c, gin.H{
+				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []gin.H{{"index": 0, "delta": delta, "finish_reason": nil}},
+			})
+		case "tool_use":
+			finishReason = "tool_calls"
+			acc.handle(event)
+			outputRunes += len([]rune(event.Name)) + len([]rune(event.Input))
+			toolIndex++
+			toolDelta := gin.H{
+				"index": toolIndex,
+				"id":    event.ToolUseID,
+				"type":  "function",
+				"function": gin.H{
+					"name":      restoreKiroToolName(event.Name, toolNameMaps),
+					"arguments": event.Input,
+				},
+			}
+			delta := gin.H{"tool_calls": []gin.H{toolDelta}}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			writeSSEData(c, gin.H{
+				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []gin.H{{"index": 0, "delta": delta, "finish_reason": nil}},
+			})
+		case "tool_use_input":
+			finishReason = "tool_calls"
+			acc.handle(event)
+			outputRunes += len([]rune(event.Input))
+			if toolIndex < 0 {
+				toolIndex = 0
+			}
+			writeSSEData(c, gin.H{
+				"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+				"choices": []gin.H{{"index": 0, "delta": gin.H{"tool_calls": []gin.H{{
+					"index": toolIndex,
+					"function": gin.H{
+						"arguments": event.Input,
+					},
+				}}}, "finish_reason": nil}},
+			})
+		case "tool_use_stop":
+			finishReason = "tool_calls"
+			acc.handle(event)
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if isLikelyKiroEventStream(contentType, reader) {
+		streamKiroEventStreamEvents(c, reader, parser, func(event kiroResponseEvent) {
+			emitEvent(event)
+		})
+		writeSSEData(c, gin.H{
+			"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []gin.H{{"index": 0, "delta": gin.H{}, "finish_reason": finishReason}},
+		})
+		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	} else {
+		buf := make([]byte, 16*1024)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				for _, event := range parser.feedEvents(buf[:n]) {
+					emitEvent(event)
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		writeSSEData(c, gin.H{
+			"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []gin.H{{"index": 0, "delta": gin.H{}, "finish_reason": finishReason}},
+		})
+		_, _ = c.Writer.Write([]byte("data: [DONE]\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	estimated := outputRunes / 4
+	if outputRunes%4 != 0 {
+		estimated++
+	}
+	if estimated < 1 {
+		return 1
+	}
+	return estimated
+}
+
 func streamKiroToAnthropic(c *gin.Context, r io.Reader, contentType string, model string, toolNameMaps *kiroToolNameMaps, thinking *anthropicThinkingInput) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -2142,6 +2325,73 @@ func streamKiroToAnthropic(c *gin.Context, r io.Reader, contentType string, mode
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+func streamKiroToAnthropicWithCount(c *gin.Context, r io.Reader, contentType string, model string, toolNameMaps *kiroToolNameMaps, thinking *anthropicThinkingInput) int {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Status(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+	msgID := "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
+	writeAnthropicEvent(c, "message_start", gin.H{
+		"type":    "message_start",
+		"message": gin.H{"id": msgID, "type": "message", "role": "assistant", "model": model, "content": []any{}, "stop_reason": nil, "stop_sequence": nil, "usage": gin.H{"input_tokens": 0, "output_tokens": 0}},
+	})
+	content, toolCalls := collectKiroResult(r, contentType, toolNameMaps)
+	blocks, stopReason := kiroAnthropicContentBlocks(content, toolCalls, kiroThinkingRequested(thinking))
+	nextIndex := 0
+	for _, block := range blocks {
+		blockType := strings.ToLower(kiroString(block["type"]))
+		switch blockType {
+		case "text":
+			text := kiroString(block["text"])
+			if text == "" {
+				continue
+			}
+			index := nextIndex
+			nextIndex++
+			writeAnthropicEvent(c, "content_block_start", gin.H{"type": "content_block_start", "index": index, "content_block": gin.H{"type": "text", "text": ""}})
+			writeAnthropicEvent(c, "content_block_delta", gin.H{"type": "content_block_delta", "index": index, "delta": gin.H{"type": "text_delta", "text": text}})
+			writeAnthropicEvent(c, "content_block_stop", gin.H{"type": "content_block_stop", "index": index})
+		case "thinking":
+			thinkingText := kiroString(block["thinking"])
+			if thinkingText == "" {
+				continue
+			}
+			index := nextIndex
+			nextIndex++
+			writeAnthropicEvent(c, "content_block_start", gin.H{"type": "content_block_start", "index": index, "content_block": gin.H{"type": "thinking", "thinking": ""}})
+			writeAnthropicEvent(c, "content_block_delta", gin.H{"type": "content_block_delta", "index": index, "delta": gin.H{"type": "thinking_delta", "thinking": thinkingText}})
+			writeAnthropicEvent(c, "content_block_stop", gin.H{"type": "content_block_stop", "index": index})
+		case "tool_use":
+			index := nextIndex
+			nextIndex++
+			input := block["input"]
+			inputJSON, err := json.Marshal(input)
+			if err != nil {
+				inputJSON = []byte(`{}`)
+			}
+			writeAnthropicEvent(c, "content_block_start", gin.H{
+				"type":  "content_block_start",
+				"index": index,
+				"content_block": gin.H{
+					"type":  "tool_use",
+					"id":    kiroString(block["id"]),
+					"name":  kiroString(block["name"]),
+					"input": gin.H{},
+				},
+			})
+			writeAnthropicEvent(c, "content_block_delta", gin.H{"type": "content_block_delta", "index": index, "delta": gin.H{"type": "input_json_delta", "partial_json": string(inputJSON)}})
+			writeAnthropicEvent(c, "content_block_stop", gin.H{"type": "content_block_stop", "index": index})
+		}
+	}
+	outputTokens := estimateKiroOutputTokens(content, toolCalls)
+	writeAnthropicEvent(c, "message_delta", gin.H{"type": "message_delta", "delta": gin.H{"stop_reason": stopReason, "stop_sequence": nil}, "usage": gin.H{"output_tokens": outputTokens}})
+	writeAnthropicEvent(c, "message_stop", gin.H{"type": "message_stop"})
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return outputTokens
 }
 
 func streamKiroEventStream(c *gin.Context, r io.Reader, parser *kiroStreamParser, emit func(content string)) {

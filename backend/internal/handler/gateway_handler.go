@@ -1013,7 +1013,10 @@ func (h *GatewayHandler) KiroChatCompletions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Failed to read request body"}})
 		return
 	}
-	_ = h.kiroGatewayService.ForwardOpenAIChat(c.Request.Context(), c, body)
+	result, _ := h.kiroGatewayService.ForwardOpenAIChat(c.Request.Context(), c, body)
+	if result != nil {
+		h.recordKiroUsage(c, body, result)
+	}
 }
 
 // KiroMessages handles Anthropic-compatible Kiro messages.
@@ -1027,7 +1030,59 @@ func (h *GatewayHandler) KiroMessages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
-	_ = h.kiroGatewayService.ForwardAnthropicMessages(c.Request.Context(), c, body)
+	result, _ := h.kiroGatewayService.ForwardAnthropicMessages(c.Request.Context(), c, body)
+	if result != nil {
+		h.recordKiroUsage(c, body, result)
+	}
+}
+
+// recordKiroUsage records billing for a successful Kiro forward.
+func (h *GatewayHandler) recordKiroUsage(c *gin.Context, body []byte, kiroResult *service.KiroForwardResult) {
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil {
+		return
+	}
+	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+
+	userAgent := c.GetHeader("User-Agent")
+	clientIP := ip.GetClientIP(c)
+	requestPayloadHash := service.HashUsageRequestPayload(body)
+	inboundEndpoint := GetInboundEndpoint(c)
+	upstreamEndpoint := "kiro/generateAssistantResponse"
+
+	forwardResult := &service.ForwardResult{
+		RequestID: kiroResult.RequestID,
+		Usage: service.ClaudeUsage{
+			InputTokens:  kiroResult.InputTokens,
+			OutputTokens: kiroResult.OutputTokens,
+		},
+		Model:    kiroResult.Model,
+		Stream:   kiroResult.Stream,
+		Duration: kiroResult.Duration,
+	}
+
+	h.submitUsageRecordTask(func(ctx context.Context) {
+		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			Result:             forwardResult,
+			ParsedRequest:      &service.ParsedRequest{Model: kiroResult.Model, Stream: kiroResult.Stream},
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Account:            kiroResult.Account,
+			Subscription:       subscription,
+			InboundEndpoint:    inboundEndpoint,
+			UpstreamEndpoint:   upstreamEndpoint,
+			UserAgent:          userAgent,
+			IPAddress:          clientIP,
+			RequestPayloadHash: requestPayloadHash,
+			APIKeyService:      h.apiKeyService,
+		}); err != nil {
+			logger.L().With(
+				zap.String("component", "handler.gateway.kiro"),
+				zap.Int64("api_key_id", apiKey.ID),
+				zap.String("model", kiroResult.Model),
+			).Error("gateway.kiro_record_usage_failed", zap.Error(err))
+		}
+	})
 }
 
 // KiroCountTokens returns a lightweight count_tokens response for Kiro.
