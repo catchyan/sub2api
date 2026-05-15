@@ -148,8 +148,8 @@ func TestBuildKiroPayloadAlternatesAndKeepsImages(t *testing.T) {
 		{"role": "user", "content": "second user"},
 	}, nil, nil)
 
-	state := payload["conversationState"].(map[string]any)
-	history := state["history"].([]any)
+	state := payload["conversationState"].(map[string]any) //nolint:errcheck
+	history := state["history"].([]any)                   //nolint:errcheck
 	require.Len(t, history, 4)
 	require.Contains(t, history[0].(map[string]any), "userInputMessage")
 	require.Contains(t, history[1].(map[string]any), "assistantResponseMessage")

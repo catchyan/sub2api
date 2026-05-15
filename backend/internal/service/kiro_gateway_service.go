@@ -151,7 +151,7 @@ func (s *KiroGatewayService) ForwardOpenAIChat(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return nil, writeOpenAIError(c, http.StatusBadGateway, "api_error", err.Error())
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, writeOpenAIError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
@@ -219,7 +219,7 @@ func (s *KiroGatewayService) ForwardAnthropicMessages(ctx context.Context, c *gi
 	if err != nil {
 		return nil, writeKiroAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, writeKiroAnthropicError(c, mapKiroStatus(resp.StatusCode), "api_error", upstreamErrorMessage(respBody))
@@ -293,7 +293,7 @@ func (s *KiroGatewayService) fetchAccountModels(ctx context.Context, account *Ac
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("kiro list models failed: status=%d", resp.StatusCode)
 	}
@@ -377,7 +377,7 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 		}
 		if resp.StatusCode == http.StatusForbidden {
 			_ = s.tokenProvider.Refresh(ctx, account)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			resp, err = s.callGenerate(ctx, account, payload)
 			if err != nil {
 				lastErr = err
@@ -388,7 +388,7 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 			return resp, account, nil
 		}
 		if isKiroRecoverableStatus(resp.StatusCode) && i < len(accounts)-1 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
 		return resp, account, nil
@@ -1378,14 +1378,14 @@ func (a *kiroToolAccumulator) handle(event kiroResponseEvent) {
 			a.current.name = event.Name
 		}
 		if event.Input != "" {
-			a.current.input.WriteString(event.Input)
+			_, _ = a.current.input.WriteString(event.Input)
 		}
 		if event.Stop {
 			a.finish()
 		}
 	case "tool_use_input":
 		if a.current != nil && event.Input != "" {
-			a.current.input.WriteString(event.Input)
+			_, _ = a.current.input.WriteString(event.Input)
 		}
 	case "tool_use_stop":
 		if event.Stop {
@@ -1502,23 +1502,23 @@ func parseBracketKiroToolCalls(text string) (string, []kiroToolCall) {
 	for {
 		start := strings.Index(text[pos:], "[Called")
 		if start < 0 {
-			cleaned.WriteString(text[pos:])
+			_, _ = cleaned.WriteString(text[pos:])
 			break
 		}
 		start += pos
 		end := findMatchingBracket(text, start, '[', ']')
 		if end < 0 {
-			cleaned.WriteString(text[pos:])
+			_, _ = cleaned.WriteString(text[pos:])
 			break
 		}
 		segment := text[start : end+1]
 		if call, ok := parseBracketKiroToolCall(segment); ok {
-			cleaned.WriteString(text[pos:start])
+			_, _ = cleaned.WriteString(text[pos:start])
 			calls = append(calls, call)
 			pos = end + 1
 			continue
 		}
-		cleaned.WriteString(text[pos : end+1])
+		_, _ = cleaned.WriteString(text[pos : end+1])
 		pos = end + 1
 	}
 	return cleaned.String(), calls
@@ -1947,11 +1947,11 @@ func collectKiroResult(r io.Reader, contentType string, toolNameMaps *kiroToolNa
 		if n > 0 {
 			events := parser.feedEvents(buf[:n])
 			if len(events) == 0 && !looksLikeKiroEventStreamBytes(buf[:n]) {
-				b.Write(buf[:n])
+				_, _ = b.Write(buf[:n])
 			}
 			for _, event := range events {
 				if event.Type == "content" {
-					b.WriteString(event.Content)
+					_, _ = b.WriteString(event.Content)
 				} else {
 					acc.handle(event)
 				}
@@ -1982,7 +1982,7 @@ func collectKiroEventStreamResult(r io.Reader, parser *kiroStreamParser, toolNam
 		}
 		for _, event := range parser.feedPayloadEvents(payload) {
 			if event.Type == "content" {
-				b.WriteString(event.Content)
+				_, _ = b.WriteString(event.Content)
 			} else {
 				acc.handle(event)
 			}
