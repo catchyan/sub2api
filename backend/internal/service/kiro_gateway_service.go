@@ -399,17 +399,6 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 	return nil, nil, errors.New("no schedulable kiro accounts")
 }
 
-func (s *KiroGatewayService) selectAccount(ctx context.Context, groupID *int64) (*Account, error) {
-	accounts, err := s.listAccounts(ctx, groupID)
-	if err != nil {
-		return nil, err
-	}
-	if len(accounts) == 0 {
-		return nil, errors.New("no schedulable kiro accounts")
-	}
-	return &accounts[0], nil
-}
-
 func (s *KiroGatewayService) listAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
 	if forcePlatform, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && forcePlatform != "" && forcePlatform != PlatformKiro {
 		return nil, fmt.Errorf("forced platform %s is not kiro", forcePlatform)
@@ -793,11 +782,6 @@ func extractKiroContentImagesAndThinking(v any) (string, []any, string) {
 	}
 }
 
-func extractKiroContentBlock(block map[string]any) (string, []any) {
-	text, images, _ := extractKiroContentBlockDetailed(block)
-	return text, images
-}
-
 func extractKiroContentBlockDetailed(block map[string]any) (string, []any, string) {
 	blockType := strings.ToLower(kiroString(block["type"]))
 	switch blockType {
@@ -1149,26 +1133,6 @@ func kiroImageFormat(mediaType string) string {
 	}
 }
 
-func extractOpenAIToolCalls(v any) string {
-	items, ok := v.([]any)
-	if !ok || len(items) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, item := range items {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if fn, ok := m["function"].(map[string]any); ok {
-			name := kiroFirstNonEmpty(kiroString(fn["name"]), "tool")
-			args := kiroString(fn["arguments"])
-			parts = append(parts, fmt.Sprintf("Tool request %s: %s", name, args))
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
 func estimateKiroOutputTokens(content string, toolCalls []kiroToolCall) int {
 	runes := len([]rune(content))
 	for _, tc := range toolCalls {
@@ -1271,17 +1235,6 @@ type kiroToolCallBuffer struct {
 	id    string
 	name  string
 	input strings.Builder
-}
-
-func (p *kiroStreamParser) feedPayload(payload []byte) []string {
-	events := p.feedPayloadEvents(payload)
-	out := make([]string, 0, len(events))
-	for _, event := range events {
-		if event.Type == "content" {
-			out = append(out, event.Content)
-		}
-	}
-	return out
 }
 
 func (p *kiroStreamParser) feedPayloadEvents(payload []byte) []kiroResponseEvent {
@@ -1781,9 +1734,10 @@ func findMatchingBracket(text string, start int, open, close byte) int {
 		if inString {
 			continue
 		}
-		if ch == open {
+		switch ch {
+		case open:
 			depth++
-		} else if ch == close {
+		case close:
 			depth--
 			if depth == 0 {
 				return i
@@ -1791,20 +1745,6 @@ func findMatchingBracket(text string, start int, open, close byte) int {
 		}
 	}
 	return -1
-}
-
-func (p *kiroStreamParser) feedPayloadContentFields(payload []byte) []string {
-	var data any
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return p.feed(payload)
-	}
-	var out []string
-	for _, content := range extractKiroContentFields(data) {
-		if delta, ok := p.normalizeContentDelta(content); ok {
-			out = append(out, delta)
-		}
-	}
-	return out
 }
 
 func (p *kiroStreamParser) feed(chunk []byte) []string {
@@ -1851,34 +1791,6 @@ func (p *kiroStreamParser) normalizeContentDelta(content string) (string, bool) 
 	return delta, true
 }
 
-func extractKiroContentFields(v any) []string {
-	switch x := v.(type) {
-	case map[string]any:
-		if x["followupPrompt"] != nil {
-			return nil
-		}
-		var out []string
-		if content := kiroString(x["content"]); content != "" {
-			out = append(out, content)
-		}
-		for key, value := range x {
-			if key == "content" {
-				continue
-			}
-			out = append(out, extractKiroContentFields(value)...)
-		}
-		return out
-	case []any:
-		var out []string
-		for _, item := range x {
-			out = append(out, extractKiroContentFields(item)...)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
 func findMatchingJSONBrace(s string, start int) int {
 	depth := 0
 	inString := false
@@ -1900,9 +1812,10 @@ func findMatchingJSONBrace(s string, start int) int {
 		if inString {
 			continue
 		}
-		if ch == '{' {
+		switch ch {
+		case '{':
 			depth++
-		} else if ch == '}' {
+		case '}':
 			depth--
 			if depth == 0 {
 				return i
@@ -1910,11 +1823,6 @@ func findMatchingJSONBrace(s string, start int) int {
 		}
 	}
 	return -1
-}
-
-func collectKiroContent(r io.Reader, contentType string) string {
-	content, _ := collectKiroResult(r, contentType, nil)
-	return content
 }
 
 func decodeKiroEventStreamPayload(decoder *bedrockEventStreamDecoder) ([]byte, error) {
@@ -1964,11 +1872,6 @@ func collectKiroResult(r io.Reader, contentType string, toolNameMaps *kiroToolNa
 	acc.finish()
 	content, calls := cleanKiroToolSyntaxText(b.String(), acc.calls)
 	return content, restoreKiroToolCalls(calls, toolNameMaps)
-}
-
-func collectKiroEventStreamContent(r io.Reader, parser *kiroStreamParser) string {
-	content, _ := collectKiroEventStreamResult(r, parser, nil)
-	return content
 }
 
 func collectKiroEventStreamResult(r io.Reader, parser *kiroStreamParser, toolNameMaps *kiroToolNameMaps) (string, []kiroToolCall) {

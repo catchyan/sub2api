@@ -96,7 +96,7 @@ func ImportKiroCredentials(ctx context.Context, req KiroCredentialImportRequest)
 			return nil, err
 		}
 		tmpName := tmp.Name()
-		defer os.Remove(tmpName)
+		defer func() { _ = os.Remove(tmpName) }()
 		if _, err := tmp.Write(sqliteBytes); err != nil {
 			_ = tmp.Close()
 			return nil, err
@@ -304,7 +304,7 @@ func NormalizeKiroSQLiteCredential(ctx context.Context, path string, req KiroCre
 	if err != nil {
 		return KiroNormalizedCredential{}, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := db.PingContext(ctx); err != nil {
 		return KiroNormalizedCredential{}, err
 	}
@@ -525,7 +525,7 @@ func normalizeKiroMachineID(machineID string) string {
 
 func isKiroHex(s string) bool {
 	for _, r := range s {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 			return false
 		}
 	}

@@ -15,21 +15,21 @@ import (
 
 // KiroUsageLimitsResponse Kiro getUsageLimits API 返回结构
 type KiroUsageLimitsResponse struct {
-	UsageBreakdownList []KiroUsageBreakdown `json:"usageBreakdownList"`
+	UsageBreakdownList []KiroUsageBreakdown  `json:"usageBreakdownList"`
 	SubscriptionInfo   *KiroSubscriptionInfo `json:"subscriptionInfo"`
 	UserInfo           *KiroUserInfo         `json:"userInfo"`
 }
 
 type KiroUsageBreakdown struct {
-	ResourceType             string       `json:"resourceType"`
-	DisplayName              string       `json:"displayName"`
-	CurrentUsage             *float64     `json:"currentUsage"`
-	CurrentUsageWithPrecision *float64    `json:"currentUsageWithPrecision"`
-	UsageLimit               *float64     `json:"usageLimit"`
-	UsageLimitWithPrecision  *float64     `json:"usageLimitWithPrecision"`
-	NextDateReset            *int64       `json:"nextDateReset"`
-	Bonuses                  []KiroBonus  `json:"bonuses"`
-	FreeTrialInfo            *KiroFreeTrial `json:"freeTrialInfo"`
+	ResourceType              string         `json:"resourceType"`
+	DisplayName               string         `json:"displayName"`
+	CurrentUsage              *float64       `json:"currentUsage"`
+	CurrentUsageWithPrecision *float64       `json:"currentUsageWithPrecision"`
+	UsageLimit                *float64       `json:"usageLimit"`
+	UsageLimitWithPrecision   *float64       `json:"usageLimitWithPrecision"`
+	NextDateReset             *int64         `json:"nextDateReset"`
+	Bonuses                   []KiroBonus    `json:"bonuses"`
+	FreeTrialInfo             *KiroFreeTrial `json:"freeTrialInfo"`
 }
 
 func (b *KiroUsageBreakdown) GetCurrentUsage() float64 {
@@ -169,7 +169,7 @@ func (f *KiroQuotaFetcher) callGetUsageLimits(ctx context.Context, account *Acco
 	if err != nil {
 		return nil, fmt.Errorf("kiro usage request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 

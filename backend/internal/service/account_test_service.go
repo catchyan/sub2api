@@ -227,7 +227,7 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusForbidden {
 		_ = s.kiroTokenProvider.Refresh(ctx, account)
 		_ = resp.Body.Close()
@@ -235,7 +235,7 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed after refresh: %s", err.Error()))
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

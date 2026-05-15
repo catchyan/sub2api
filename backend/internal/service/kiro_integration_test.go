@@ -149,18 +149,18 @@ func TestBuildKiroPayloadAlternatesAndKeepsImages(t *testing.T) {
 	}, nil, nil)
 
 	state := payload["conversationState"].(map[string]any) //nolint:errcheck
-	history := state["history"].([]any)                   //nolint:errcheck
+	history := state["history"].([]any)                    //nolint:errcheck
 	require.Len(t, history, 4)
-	require.Contains(t, history[0].(map[string]any), "userInputMessage")
-	require.Contains(t, history[1].(map[string]any), "assistantResponseMessage")
-	require.Contains(t, history[2].(map[string]any), "userInputMessage")
-	require.Contains(t, history[3].(map[string]any), "assistantResponseMessage")
+	require.Contains(t, history[0].(map[string]any), "userInputMessage")         //nolint:errcheck
+	require.Contains(t, history[1].(map[string]any), "assistantResponseMessage") //nolint:errcheck
+	require.Contains(t, history[2].(map[string]any), "userInputMessage")         //nolint:errcheck
+	require.Contains(t, history[3].(map[string]any), "assistantResponseMessage") //nolint:errcheck
 
-	firstUser := history[2].(map[string]any)["userInputMessage"].(map[string]any)
+	firstUser := history[2].(map[string]any)["userInputMessage"].(map[string]any) //nolint:errcheck
 	require.Equal(t, "auto", firstUser["modelId"])
 	require.Len(t, firstUser["images"], 1)
 
-	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any) //nolint:errcheck
 	require.Equal(t, "auto", current["modelId"])
 	require.Equal(t, "system note\n\nsecond user", current["content"])
 }
@@ -178,15 +178,15 @@ func TestBuildKiroPayloadIncludesToolContext(t *testing.T) {
 		},
 	}, nil)
 
-	state := payload["conversationState"].(map[string]any)
-	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
-	context := current["userInputMessageContext"].(map[string]any)
+	state := payload["conversationState"].(map[string]any)                                   //nolint:errcheck
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any) //nolint:errcheck
+	context := current["userInputMessageContext"].(map[string]any)                           //nolint:errcheck
 
 	require.Equal(t, "Tool results provided.", current["content"])
 	require.Len(t, context["toolResults"], 1)
 	require.Len(t, context["tools"], 1)
 
-	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any)
+	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any) //nolint:errcheck
 	require.Equal(t, "Bash", tool["name"])
 }
 
@@ -198,10 +198,10 @@ func TestNormalizeKiroMessagesKeepsAssistantToolUsesStructured(t *testing.T) {
 		{"role": "user", "content": "done"},
 	}, nil, nil)
 
-	state := payload["conversationState"].(map[string]any)
-	history := state["history"].([]any)
-	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any)
-	toolUses := assistant["toolUses"].([]map[string]any)
+	state := payload["conversationState"].(map[string]any)                                //nolint:errcheck
+	history := state["history"].([]any)                                                   //nolint:errcheck
+	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any) //nolint:errcheck
+	toolUses := assistant["toolUses"].([]map[string]any)                                  //nolint:errcheck
 
 	require.Equal(t, "Bash", toolUses[0]["name"])
 	require.Equal(t, "toolu_1", toolUses[0]["toolUseId"])
@@ -220,7 +220,7 @@ func TestKiroToolEventsBecomeParsedToolCalls(t *testing.T) {
 	require.Len(t, acc.calls, 1)
 	require.Equal(t, "toolu_1", acc.calls[0].ID)
 	require.Equal(t, "Bash", acc.calls[0].Name)
-	require.Equal(t, "ls", acc.calls[0].Input.(map[string]any)["command"])
+	require.Equal(t, "ls", acc.calls[0].Input.(map[string]any)["command"]) //nolint:errcheck
 }
 
 func TestCleanKiroToolSyntaxTextParsesXMLFallback(t *testing.T) {
@@ -229,7 +229,7 @@ func TestCleanKiroToolSyntaxTextParsesXMLFallback(t *testing.T) {
 	require.Equal(t, "before  after", content)
 	require.Len(t, calls, 1)
 	require.Equal(t, "Bash", calls[0].Name)
-	require.Equal(t, "pwd", calls[0].Input.(map[string]any)["command"])
+	require.Equal(t, "pwd", calls[0].Input.(map[string]any)["command"]) //nolint:errcheck
 }
 
 func TestKiroToolNameMapsShortenAndRestore(t *testing.T) {
@@ -256,11 +256,11 @@ func TestBuildKiroPayloadShortensToolNamesForKiro(t *testing.T) {
 		"input_schema": map[string]any{"type": "object", "properties": map[string]any{}},
 	}}, nil)
 
-	state := payload["conversationState"].(map[string]any)
-	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
-	context := current["userInputMessageContext"].(map[string]any)
-	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any)
-	alias := tool["name"].(string)
+	state := payload["conversationState"].(map[string]any)                                   //nolint:errcheck
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any) //nolint:errcheck
+	context := current["userInputMessageContext"].(map[string]any)                           //nolint:errcheck
+	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any)     //nolint:errcheck
+	alias := tool["name"].(string)                                                           //nolint:errcheck
 
 	require.LessOrEqual(t, len(alias), kiroMaxToolNameLength)
 	require.NotEqual(t, longName, alias)
@@ -275,10 +275,10 @@ func TestBuildKiroPayloadAppliesAnthropicThinkingPrefixAndHistoryThinking(t *tes
 		{"role": "user", "content": "continue"},
 	}, nil, &anthropicThinkingInput{Type: "adaptive", Effort: "medium"}, nil)
 
-	state := payload["conversationState"].(map[string]any)
-	history := state["history"].([]any)
-	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any)
-	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any)
+	state := payload["conversationState"].(map[string]any)                                   //nolint:errcheck
+	history := state["history"].([]any)                                                      //nolint:errcheck
+	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any)    //nolint:errcheck
+	current := state["currentMessage"].(map[string]any)["userInputMessage"].(map[string]any) //nolint:errcheck
 
 	require.Equal(t, "<thinking>private plan</thinking>\n\nvisible answer", assistant["content"])
 	require.Contains(t, current["content"], "<thinking_mode>adaptive</thinking_mode><thinking_effort>medium</thinking_effort>")
@@ -349,9 +349,9 @@ func TestCollectKiroResultSniffsEventStreamWithoutContentType(t *testing.T) {
 
 func TestCollectKiroResultParsesKiroEventTypes(t *testing.T) {
 	var stream bytes.Buffer
-	stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"before "}`)))
-	stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
-	stream.Write(buildKiroEventStreamFrame("contextUsageEvent", []byte(`{"contextUsagePercentage":3.03}`)))
+	_, _ = stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"before "}`)))
+	_, _ = stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
+	_, _ = stream.Write(buildKiroEventStreamFrame("contextUsageEvent", []byte(`{"contextUsagePercentage":3.03}`)))
 
 	content, calls := collectKiroResult(bytes.NewReader(stream.Bytes()), "application/octet-stream", nil)
 
@@ -359,7 +359,7 @@ func TestCollectKiroResultParsesKiroEventTypes(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Equal(t, "toolu_1", calls[0].ID)
 	require.Equal(t, "Glob", calls[0].Name)
-	require.Equal(t, "*", calls[0].Input.(map[string]any)["pattern"])
+	require.Equal(t, "*", calls[0].Input.(map[string]any)["pattern"]) //nolint:errcheck
 }
 
 func TestStreamKiroToAnthropicParsesKiroToolUseEvent(t *testing.T) {
@@ -367,8 +367,8 @@ func TestStreamKiroToAnthropicParsesKiroToolUseEvent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	var stream bytes.Buffer
-	stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"I will inspect it."}`)))
-	stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
+	_, _ = stream.Write(buildKiroEventStreamFrame("contentEvent", []byte(`{"content":"I will inspect it."}`)))
+	_, _ = stream.Write(buildKiroEventStreamFrame("toolUseEvent", []byte(`{"name":"Glob","toolUseId":"toolu_1","input":"{\"pattern\":\"*\"}","stop":true}`)))
 
 	streamKiroToAnthropic(c, bytes.NewReader(stream.Bytes()), "application/octet-stream", "claude-sonnet-4-5", nil, nil)
 
