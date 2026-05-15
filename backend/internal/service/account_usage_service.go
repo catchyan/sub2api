@@ -113,13 +113,21 @@ const (
 	openAICodexProbeVersion = "0.125.0"
 )
 
+// kiroUsageCache 缓存 Kiro 额度数据
+type kiroUsageCache struct {
+	usageInfo *UsageInfo
+	timestamp time.Time
+}
+
 // UsageCache 封装账户使用量相关的缓存
 type UsageCache struct {
 	apiCache          sync.Map           // accountID -> *apiUsageCache
 	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
+	kiroCache         sync.Map           // accountID -> *kiroUsageCache
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	kiroFlight        singleflight.Group // 防止同一 Kiro 账号的并发请求击穿缓存
 	openAIProbeCache  sync.Map           // accountID -> time.Time
 }
 
@@ -206,6 +214,10 @@ type UsageInfo struct {
 	// Antigravity 废弃模型转发规则 (old_model_id -> new_model_id)
 	ModelForwardingRules map[string]string `json:"model_forwarding_rules,omitempty"`
 
+	// Kiro 额度明细
+	KiroUsageBreakdown []KiroUsageItem `json:"kiro_usage_breakdown,omitempty"`
+	KiroEmail          string          `json:"kiro_email,omitempty"`
+
 	// Antigravity 账号是否被上游禁止 (HTTP 403)
 	IsForbidden     bool   `json:"is_forbidden,omitempty"`
 	ForbiddenReason string `json:"forbidden_reason,omitempty"`
@@ -263,6 +275,7 @@ type AccountUsageService struct {
 	usageFetcher            ClaudeUsageFetcher
 	geminiQuotaService      *GeminiQuotaService
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
+	kiroQuotaFetcher        *KiroQuotaFetcher
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -275,6 +288,7 @@ func NewAccountUsageService(
 	usageFetcher ClaudeUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
+	kiroQuotaFetcher *KiroQuotaFetcher,
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
@@ -285,6 +299,7 @@ func NewAccountUsageService(
 		usageFetcher:            usageFetcher,
 		geminiQuotaService:      geminiQuotaService,
 		antigravityQuotaFetcher: antigravityQuotaFetcher,
+		kiroQuotaFetcher:        kiroQuotaFetcher,
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
@@ -320,6 +335,15 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
 	if account.Platform == PlatformAntigravity {
 		usage, err := s.getAntigravityUsage(ctx, account)
+		if err == nil {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	// Kiro 平台：使用 KiroQuotaFetcher 获取额度
+	if account.Platform == PlatformKiro {
+		usage, err := s.getKiroUsage(ctx, account)
 		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -824,6 +848,100 @@ func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *
 		return &UsageInfo{UpdatedAt: &now}, nil
 	}
 	return usage, nil
+}
+
+// getKiroUsage 获取 Kiro 账户额度
+func (s *AccountUsageService) getKiroUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	if s.kiroQuotaFetcher == nil || !s.kiroQuotaFetcher.CanFetch(account) {
+		now := time.Now()
+		return &UsageInfo{UpdatedAt: &now}, nil
+	}
+
+	// 1. 检查缓存
+	if cached, ok := s.cache.kiroCache.Load(account.ID); ok {
+		if cache, ok := cached.(*kiroUsageCache); ok {
+			if time.Since(cache.timestamp) < apiCacheTTL {
+				usage := cache.usageInfo
+				recalcKiroRemainingSeconds(usage)
+				return usage, nil
+			}
+		}
+	}
+
+	// 2. singleflight 防止并发击穿
+	flightKey := fmt.Sprintf("kiro-usage:%d", account.ID)
+	result, flightErr, _ := s.cache.kiroFlight.Do(flightKey, func() (any, error) {
+		if cached, ok := s.cache.kiroCache.Load(account.ID); ok {
+			if cache, ok := cached.(*kiroUsageCache); ok {
+				if time.Since(cache.timestamp) < apiCacheTTL {
+					usage := cache.usageInfo
+					recalcKiroRemainingSeconds(usage)
+					return usage, nil
+				}
+			}
+		}
+
+		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer fetchCancel()
+
+		fetchResult, err := s.kiroQuotaFetcher.FetchQuota(fetchCtx, account)
+		if err != nil {
+			now := time.Now()
+			degraded := &UsageInfo{
+				UpdatedAt: &now,
+				Error:     err.Error(),
+			}
+			if strings.Contains(err.Error(), "401") {
+				degraded.NeedsReauth = true
+				degraded.ErrorCode = "unauthenticated"
+			}
+			enrichUsageWithAccountError(degraded, account)
+			s.cache.kiroCache.Store(account.ID, &kiroUsageCache{
+				usageInfo: degraded,
+				timestamp: time.Now(),
+			})
+			return degraded, nil
+		}
+
+		enrichUsageWithAccountError(fetchResult.UsageInfo, account)
+		s.cache.kiroCache.Store(account.ID, &kiroUsageCache{
+			usageInfo: fetchResult.UsageInfo,
+			timestamp: time.Now(),
+		})
+		return fetchResult.UsageInfo, nil
+	})
+
+	if flightErr != nil {
+		return nil, flightErr
+	}
+	usage, ok := result.(*UsageInfo)
+	if !ok || usage == nil {
+		now := time.Now()
+		return &UsageInfo{UpdatedAt: &now}, nil
+	}
+	return usage, nil
+}
+
+func recalcKiroRemainingSeconds(info *UsageInfo) {
+	if info == nil {
+		return
+	}
+	if info.FiveHour != nil && info.FiveHour.ResetsAt != nil {
+		remaining := int(time.Until(*info.FiveHour.ResetsAt).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+		info.FiveHour.RemainingSeconds = remaining
+	}
+	for i := range info.KiroUsageBreakdown {
+		if info.KiroUsageBreakdown[i].ResetsAt != nil {
+			remaining := int(time.Until(*info.KiroUsageBreakdown[i].ResetsAt).Seconds())
+			if remaining < 0 {
+				remaining = 0
+			}
+			info.KiroUsageBreakdown[i].RemainingSeconds = remaining
+		}
+	}
 }
 
 // recalcAntigravityRemainingSeconds 重新计算 Antigravity UsageInfo 中各窗口的 RemainingSeconds
