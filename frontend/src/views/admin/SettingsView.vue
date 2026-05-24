@@ -203,6 +203,154 @@
 
         <!-- Tab: Gateway -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
+          <div class="card">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ localText("OpenAI 401 守护", "OpenAI 401 Guard") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{
+                  localText(
+                    "检测 OpenAI OAuth 账号 401，调用会话提供器导入 GuJumpgate/Codex session JSON，只尝试一次。",
+                    "Detects OpenAI OAuth 401 accounts and imports GuJumpgate/Codex session JSON from a session provider once per event.",
+                  )
+                }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">
+                    {{ localText("启用守护进程", "Enable guard") }}
+                  </label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{
+                      localText(
+                        "启用后后台会按间隔扫描 status=error 的 OpenAI OAuth 账号。",
+                        "When enabled, the backend scans OpenAI OAuth accounts in error status on an interval.",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle v-model="form.openai_401_guard_settings.enabled" />
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-3">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("扫描间隔（秒）", "Interval seconds") }}
+                  </label>
+                  <input
+                    v-model.number="form.openai_401_guard_settings.check_interval_seconds"
+                    type="number"
+                    min="10"
+                    max="3600"
+                    class="input w-full"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("单账号超时（秒）", "Timeout seconds") }}
+                  </label>
+                  <input
+                    v-model.number="form.openai_401_guard_settings.timeout_seconds"
+                    type="number"
+                    min="10"
+                    max="1800"
+                    class="input w-full"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("每轮最多账号", "Max per cycle") }}
+                  </label>
+                  <input
+                    v-model.number="form.openai_401_guard_settings.max_accounts_per_cycle"
+                    type="number"
+                    min="1"
+                    max="100"
+                    class="input w-full"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText("Cloudflare Temp Email API", "Cloudflare Temp Email API") }}
+                </label>
+                <input
+                  v-model="form.openai_401_guard_settings.temp_email_base_url"
+                  type="url"
+                  class="input w-full"
+                  placeholder="https://email.example.com"
+                />
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText("Temp Email Admin Auth", "Temp Email admin auth") }}
+                </label>
+                <input
+                  v-model="form.openai_401_guard_settings.temp_email_admin_auth"
+                  type="password"
+                  class="input w-full"
+                  :placeholder="
+                    form.openai_401_guard_settings.temp_email_admin_auth_configured
+                      ? localText('已配置，留空保留当前值。', 'Configured. Leave empty to keep current value.')
+                      : ''
+                  "
+                />
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText("Session Provider Command", "Session provider command") }}
+                </label>
+                <textarea
+                  v-model="openai401GuardCommandText"
+                  rows="3"
+                  class="input w-full font-mono text-sm"
+                  placeholder="node C:\\path\\to\\provider.js"
+                ></textarea>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    localText(
+                      "每行一个命令参数。命令 stdout 输出 {\"content\":\"<session json>\"} 或 GuJumpgate/Codex session JSON。",
+                      'One argument per line. stdout should return {"content":"<session json>"} or GuJumpgate/Codex session JSON.',
+                    )
+                  }}
+                </p>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">
+                      {{ localText("失败后删除错误账号", "Delete error account on failure") }}
+                    </span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">
+                      {{ localText("仅删除 status=error 的账号。", "Only deletes accounts already in error status.") }}
+                    </span>
+                  </span>
+                  <Toggle v-model="form.openai_401_guard_settings.delete_on_failure" />
+                </label>
+                <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                  <span>
+                    <span class="block font-medium text-gray-900 dark:text-white">
+                      {{ localText("传入账号凭据 JSON", "Pass credentials JSON") }}
+                    </span>
+                    <span class="block text-sm text-gray-500 dark:text-gray-400">
+                      {{ localText("通过环境变量传给 provider，方便定位邮箱和代理。", "Passes credentials to the provider through env for email/proxy lookup.") }}
+                    </span>
+                  </span>
+                  <Toggle v-model="form.openai_401_guard_settings.include_credentials_env" />
+                </label>
+              </div>
+            </div>
+          </div>
+
           <!-- Overload Cooldown (529) Settings -->
           <div class="card">
             <div
@@ -6142,6 +6290,7 @@ import type {
   WebSearchEmulationConfig,
   WebSearchProviderConfig,
   WebSearchTestResult,
+  OpenAI401GuardSettings,
 } from "@/api/admin/settings";
 import type {
   AdminGroup,
@@ -6429,6 +6578,7 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  openai_401_guard_settings: OpenAI401GuardSettings;
 };
 
 const form = reactive<SettingsForm>({
@@ -6615,11 +6765,34 @@ const form = reactive<SettingsForm>({
   available_channels_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
+  openai_401_guard_settings: {
+    enabled: false,
+    check_interval_seconds: 60,
+    timeout_seconds: 300,
+    max_accounts_per_cycle: 5,
+    delete_on_failure: false,
+    session_provider_command: [],
+    include_credentials_env: false,
+    temp_email_base_url: "",
+    temp_email_admin_auth: "",
+    temp_email_admin_auth_configured: false,
+  },
 });
 
 const authSourceDefaults = reactive<AuthSourceDefaultsState>(
   buildAuthSourceDefaultsState({}),
 );
+
+const openai401GuardCommandText = computed({
+  get: () =>
+    (form.openai_401_guard_settings.session_provider_command || []).join("\n"),
+  set: (value: string) => {
+    form.openai_401_guard_settings.session_provider_command = value
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .filter((part) => part !== "");
+  },
+});
 
 const authSourceDefaultsMeta = computed(() => [
   {
@@ -7299,6 +7472,18 @@ async function loadSettings() {
       form.wechat_connect_mode,
     );
     form.oidc_connect_client_secret = "";
+    if (settings.openai_401_guard_settings) {
+      form.openai_401_guard_settings = {
+        ...form.openai_401_guard_settings,
+        ...settings.openai_401_guard_settings,
+        session_provider_command: Array.isArray(
+          settings.openai_401_guard_settings.session_provider_command,
+        )
+          ? [...settings.openai_401_guard_settings.session_provider_command]
+          : [],
+        temp_email_admin_auth: "",
+      };
+    }
 
     // Load OpenAI fast/flex policy rules from bulk settings.
     // 仅当 payload 真的包含该字段时填充并标记为已加载；否则保持表单空值，
@@ -7721,6 +7906,25 @@ async function saveSettings() {
       available_channels_enabled: form.available_channels_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
+      openai_401_guard_settings: {
+        ...form.openai_401_guard_settings,
+        check_interval_seconds:
+          Number(form.openai_401_guard_settings.check_interval_seconds) || 60,
+        timeout_seconds:
+          Number(form.openai_401_guard_settings.timeout_seconds) || 300,
+        max_accounts_per_cycle:
+          Number(form.openai_401_guard_settings.max_accounts_per_cycle) || 5,
+        session_provider_command: (
+          form.openai_401_guard_settings.session_provider_command || []
+        )
+          .map((part) => part.trim())
+          .filter((part) => part !== ""),
+        temp_email_base_url:
+          form.openai_401_guard_settings.temp_email_base_url.trim(),
+        temp_email_admin_auth:
+          form.openai_401_guard_settings.temp_email_admin_auth?.trim() ||
+          undefined,
+      },
     };
 
     // 仅当 openai_fast_policy_settings 已成功从后端加载时才回写，
@@ -7801,6 +8005,18 @@ async function saveSettings() {
       form.wechat_connect_mode,
     );
     form.oidc_connect_client_secret = "";
+    if (updated.openai_401_guard_settings) {
+      form.openai_401_guard_settings = {
+        ...form.openai_401_guard_settings,
+        ...updated.openai_401_guard_settings,
+        session_provider_command: Array.isArray(
+          updated.openai_401_guard_settings.session_provider_command,
+        )
+          ? [...updated.openai_401_guard_settings.session_provider_command]
+          : [],
+        temp_email_admin_auth: "",
+      };
+    }
     // Refresh OpenAI fast/flex policy from server response
     if (
       updated.openai_fast_policy_settings &&

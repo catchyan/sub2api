@@ -59,6 +59,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		opsSystemLogSinkSvc,
 		schedulerSnapshotSvc,
 		tokenRefreshSvc,
+		nil, // openAI401Relogin
 		accountExpirySvc,
 		subscriptionExpirySvc,
 		&service.UsageCleanupService{},

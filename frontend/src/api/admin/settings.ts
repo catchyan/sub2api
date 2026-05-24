@@ -528,6 +528,20 @@ export interface SystemSettings {
 
   // OpenAI fast/flex policy
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
+  openai_401_guard_settings?: OpenAI401GuardSettings;
+}
+
+export interface OpenAI401GuardSettings {
+  enabled: boolean;
+  check_interval_seconds: number;
+  timeout_seconds: number;
+  max_accounts_per_cycle: number;
+  delete_on_failure: boolean;
+  session_provider_command: string[];
+  include_credentials_env: boolean;
+  temp_email_base_url: string;
+  temp_email_admin_auth?: string;
+  temp_email_admin_auth_configured: boolean;
 }
 
 export interface UpdateSettingsRequest {
@@ -723,6 +737,7 @@ export interface UpdateSettingsRequest {
 
   // OpenAI fast/flex policy
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
+  openai_401_guard_settings?: OpenAI401GuardSettings;
 }
 
 /**

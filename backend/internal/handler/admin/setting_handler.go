@@ -273,6 +273,11 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	} else if fastPolicy != nil {
 		payload.OpenAIFastPolicySettings = openaiFastPolicySettingsToDTO(fastPolicy)
 	}
+	if guardSettings, err := h.settingService.GetOpenAI401GuardSettings(c.Request.Context()); err != nil {
+		slog.Error("openai_401_guard_settings_get_failed", "error", err)
+	} else if guardSettings != nil {
+		payload.OpenAI401GuardSettings = openAI401GuardSettingsToDTO(guardSettings)
+	}
 
 	response.Success(c, systemSettingsResponseData(payload, authSourceDefaults))
 }
@@ -309,6 +314,40 @@ func openaiFastPolicySettingsFromDTO(s *dto.OpenAIFastPolicySettings) *service.O
 		rules[i].ServiceTier = tier
 	}
 	return &service.OpenAIFastPolicySettings{Rules: rules}
+}
+
+func openAI401GuardSettingsToDTO(s *service.OpenAI401GuardSettings) *dto.OpenAI401GuardSettings {
+	if s == nil {
+		return nil
+	}
+	return &dto.OpenAI401GuardSettings{
+		Enabled:                  s.Enabled,
+		CheckIntervalSeconds:     s.CheckIntervalSeconds,
+		TimeoutSeconds:           s.TimeoutSeconds,
+		MaxAccountsPerCycle:      s.MaxAccountsPerCycle,
+		DeleteOnFailure:          s.DeleteOnFailure,
+		SessionProviderCommand:   append([]string(nil), s.SessionProviderCommand...),
+		IncludeCredentialsEnv:    s.IncludeCredentialsEnv,
+		TempEmailBaseURL:         s.TempEmailBaseURL,
+		TempEmailAdminConfigured: s.TempEmailAdminConfigured,
+	}
+}
+
+func openAI401GuardSettingsFromDTO(s *dto.OpenAI401GuardSettings) *service.OpenAI401GuardSettings {
+	if s == nil {
+		return nil
+	}
+	return &service.OpenAI401GuardSettings{
+		Enabled:                s.Enabled,
+		CheckIntervalSeconds:   s.CheckIntervalSeconds,
+		TimeoutSeconds:         s.TimeoutSeconds,
+		MaxAccountsPerCycle:    s.MaxAccountsPerCycle,
+		DeleteOnFailure:        s.DeleteOnFailure,
+		SessionProviderCommand: append([]string(nil), s.SessionProviderCommand...),
+		IncludeCredentialsEnv:  s.IncludeCredentialsEnv,
+		TempEmailBaseURL:       s.TempEmailBaseURL,
+		TempEmailAdminAuth:     s.TempEmailAdminAuth,
+	}
 }
 
 func loginAgreementDocumentsToDTO(items []service.LoginAgreementDocument) []dto.LoginAgreementDocument {
@@ -575,6 +614,9 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+
+	// OpenAI 401 guard (optional, only updated when provided)
+	OpenAI401GuardSettings *dto.OpenAI401GuardSettings `json:"openai_401_guard_settings,omitempty"`
 }
 
 // UpdateSettings 更新系统设置
@@ -1588,6 +1630,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
+	if req.OpenAI401GuardSettings != nil {
+		if err := h.settingService.SetOpenAI401GuardSettings(c.Request.Context(), openAI401GuardSettingsFromDTO(req.OpenAI401GuardSettings)); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
 
 	// Update payment configuration (integrated into system settings).
 	// Skip if no payment fields were provided (prevents accidental wipe).
@@ -1817,6 +1865,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
 	} else if fastPolicy != nil {
 		payload.OpenAIFastPolicySettings = openaiFastPolicySettingsToDTO(fastPolicy)
+	}
+	if guardSettings, err := h.settingService.GetOpenAI401GuardSettings(c.Request.Context()); err != nil {
+		slog.Error("openai_401_guard_settings_get_failed", "error", err)
+	} else if guardSettings != nil {
+		payload.OpenAI401GuardSettings = openAI401GuardSettingsToDTO(guardSettings)
 	}
 	response.Success(c, systemSettingsResponseData(payload, updatedAuthSourceDefaults))
 }

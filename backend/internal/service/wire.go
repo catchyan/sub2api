@@ -71,6 +71,19 @@ func ProvideTokenRefreshService(
 	return svc
 }
 
+// ProvideOpenAI401ReloginService creates and starts the OpenAI OAuth 401 relogin daemon.
+func ProvideOpenAI401ReloginService(
+	accountRepo AccountRepository,
+	settingService *SettingService,
+	cacheInvalidator TokenCacheInvalidator,
+	tempUnschedCache TempUnschedCache,
+	cfg *config.Config,
+) *OpenAI401ReloginService {
+	svc := NewOpenAI401ReloginService(accountRepo, settingService, cacheInvalidator, tempUnschedCache, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideClaudeTokenProvider creates ClaudeTokenProvider with OAuthRefreshAPI injection
 func ProvideClaudeTokenProvider(
 	accountRepo AccountRepository,
@@ -492,6 +505,7 @@ var ProviderSet = wire.NewSet(
 	NewCRSSyncService,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
+	ProvideOpenAI401ReloginService,
 	ProvideAccountExpiryService,
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,

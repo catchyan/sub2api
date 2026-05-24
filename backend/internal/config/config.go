@@ -477,7 +477,8 @@ func normalizeWeChatConnectConfig(cfg *WeChatConnectConfig) {
 // TokenRefreshConfig OAuth token自动刷新配置
 type TokenRefreshConfig struct {
 	// 是否启用自动刷新
-	Enabled bool `mapstructure:"enabled"`
+	Enabled    bool                  `mapstructure:"enabled"`
+	Relogin401 TokenRelogin401Config `mapstructure:"relogin_401"`
 	// 检查间隔（分钟）
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
 	// 提前刷新时间（小时），在token过期前多久开始刷新
@@ -486,6 +487,20 @@ type TokenRefreshConfig struct {
 	MaxRetries int `mapstructure:"max_retries"`
 	// 重试退避基础时间（秒）
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
+}
+
+// TokenRelogin401Config controls one-shot relogin attempts for OpenAI OAuth 401s.
+type TokenRelogin401Config struct {
+	Enabled               bool     `mapstructure:"enabled"`
+	CheckIntervalSeconds  int      `mapstructure:"check_interval_seconds"`
+	Command               []string `mapstructure:"command"`
+	TimeoutSeconds        int      `mapstructure:"timeout_seconds"`
+	MaxAccountsPerCycle   int      `mapstructure:"max_accounts_per_cycle"`
+	IncludeCredentialsEnv bool     `mapstructure:"include_credentials_env"`
+	TempEmailBaseURL      string   `mapstructure:"temp_email_base_url"`
+	TempEmailAdminAuthEnv string   `mapstructure:"temp_email_admin_auth_env"`
+	TempEmailAdminAuth    string   `mapstructure:"-"`
+	DeleteOnFailure       bool     `mapstructure:"delete_on_failure"`
 }
 
 type PricingConfig struct {
@@ -1792,6 +1807,14 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // 提前30分钟刷新（适配Google 1小时token）
 	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
+	viper.SetDefault("token_refresh.relogin_401.enabled", false)
+	viper.SetDefault("token_refresh.relogin_401.check_interval_seconds", 60)
+	viper.SetDefault("token_refresh.relogin_401.timeout_seconds", 300)
+	viper.SetDefault("token_refresh.relogin_401.max_accounts_per_cycle", 5)
+	viper.SetDefault("token_refresh.relogin_401.include_credentials_env", true)
+	viper.SetDefault("token_refresh.relogin_401.temp_email_base_url", "")
+	viper.SetDefault("token_refresh.relogin_401.temp_email_admin_auth_env", "SUB2API_TEMP_EMAIL_ADMIN_AUTH")
+	viper.SetDefault("token_refresh.relogin_401.delete_on_failure", false)
 
 	// Gemini OAuth - configure via environment variables or config file
 	// GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET

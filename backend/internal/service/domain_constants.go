@@ -348,6 +348,11 @@ const (
 	// anthropic-beta header.
 	SettingKeyOpenAIFastPolicySettings = "openai_fast_policy_settings"
 
+	// SettingKeyOpenAI401GuardSettings stores JSON config for the OpenAI
+	// OAuth 401 guard. The guard imports GuJumpgate/Codex session JSON returned
+	// by a configured provider command and updates each failing account once.
+	SettingKeyOpenAI401GuardSettings = "openai_401_guard_settings"
+
 	// =========================
 	// Claude Code Version Check
 	// =========================

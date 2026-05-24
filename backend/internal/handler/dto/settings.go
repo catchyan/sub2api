@@ -223,6 +223,7 @@ type SystemSettings struct {
 
 	// OpenAI fast/flex policy
 	OpenAIFastPolicySettings *OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+	OpenAI401GuardSettings   *OpenAI401GuardSettings   `json:"openai_401_guard_settings,omitempty"`
 }
 
 type DefaultSubscriptionSetting struct {
@@ -313,6 +314,20 @@ type StreamTimeoutSettings struct {
 	TempUnschedMinutes     int    `json:"temp_unsched_minutes"`
 	ThresholdCount         int    `json:"threshold_count"`
 	ThresholdWindowMinutes int    `json:"threshold_window_minutes"`
+}
+
+// OpenAI401GuardSettings is the admin DTO for the OpenAI OAuth 401 repair daemon.
+type OpenAI401GuardSettings struct {
+	Enabled                  bool     `json:"enabled"`
+	CheckIntervalSeconds     int      `json:"check_interval_seconds"`
+	TimeoutSeconds           int      `json:"timeout_seconds"`
+	MaxAccountsPerCycle      int      `json:"max_accounts_per_cycle"`
+	DeleteOnFailure          bool     `json:"delete_on_failure"`
+	SessionProviderCommand   []string `json:"session_provider_command"`
+	IncludeCredentialsEnv    bool     `json:"include_credentials_env"`
+	TempEmailBaseURL         string   `json:"temp_email_base_url"`
+	TempEmailAdminAuth       string   `json:"temp_email_admin_auth,omitempty"`
+	TempEmailAdminConfigured bool     `json:"temp_email_admin_auth_configured"`
 }
 
 // RectifierSettings 请求整流器配置 DTO

@@ -607,6 +607,37 @@ token_refresh:
   # Whether OpenAI refresh flow is allowed to sync linked Sora accounts
   # 是否允许 OpenAI 刷新流程同步覆盖 linked_openai_account_id 关联的 Sora 账号 token
   sync_linked_sora_accounts: false
+  # One-shot OpenAI OAuth relogin daemon for accounts temporarily unscheduled by 401
+  # OpenAI OAuth 账号因 401 被临时移出调度后，调用外部程序尝试一次重新登录
+  relogin_401:
+    # Disabled by default; enable only after command is configured
+    # 默认关闭；配置好登录命令后再开启
+    enabled: false
+    # Scan interval in seconds
+    # 扫描间隔（秒）
+    check_interval_seconds: 60
+    # Command that performs Cloudflare temp-email login and prints GuJumpgate/Codex session JSON to stdout.
+    # Supported stdout shapes: {"content":"<session-json-or-access-token>"}, {"session":{...},"accessToken":"..."}, or legacy {"credentials":{...}}.
+    # 执行 Cloudflare 临时邮箱登录的命令，stdout 输出 GuJumpgate/Codex session JSON；也兼容旧 credentials JSON
+    command: []
+    # Command timeout in seconds
+    # 命令超时（秒）
+    timeout_seconds: 300
+    # Max accounts attempted per scan cycle
+    # 每轮最多尝试账号数
+    max_accounts_per_cycle: 5
+    # Pass existing credentials JSON via SUB2API_ACCOUNT_CREDENTIALS_JSON
+    # 是否通过 SUB2API_ACCOUNT_CREDENTIALS_JSON 传入现有 credentials
+    include_credentials_env: true
+    # Temp email service base URL passed to relogin command as SUB2API_TEMP_EMAIL_BASE_URL
+    # 传给重新登录命令的临时邮箱服务地址
+    temp_email_base_url: ""
+    # Environment variable name that stores the temp email admin auth/password
+    # 存放临时邮箱 admin auth/password 的环境变量名
+    temp_email_admin_auth_env: "SUB2API_TEMP_EMAIL_ADMIN_AUTH"
+    # Delete status=error account if the one-shot session import repair fails
+    # 修复失败后是否删除 status=error 的账号
+    delete_on_failure: false
 
 # =============================================================================
 # API Key Auth Cache Configuration
