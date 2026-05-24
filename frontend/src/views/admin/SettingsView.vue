@@ -278,8 +278,25 @@
 
               <div>
                 <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText("Cloudflare Temp Email API", "Cloudflare Temp Email API") }}
+                  {{ localText("401 处理方式", "401 provider") }}
                 </label>
+                <select
+                  v-model="form.openai_401_guard_settings.provider_type"
+                  class="input w-full"
+                >
+                  <option value="builtin_cloudflare_temp_email">
+                    {{ localText("内置 Cloudflare Temp Email", "Built-in Cloudflare Temp Email") }}
+                  </option>
+                  <option value="external_command">
+                    {{ localText("外部命令", "External command") }}
+                  </option>
+                </select>
+              </div>
+
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("Cloudflare Temp Email API", "Cloudflare Temp Email API") }}
+                  </label>
                 <input
                   v-model="form.openai_401_guard_settings.temp_email_base_url"
                   type="url"
@@ -301,13 +318,27 @@
                       ? localText('已配置，留空保留当前值。', 'Configured. Leave empty to keep current value.')
                       : ''
                   "
-                />
-              </div>
+                  />
+                </div>
 
-              <div>
-                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ localText("Session Provider Command", "Session provider command") }}
-                </label>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("允许重登邮箱域名", "Allowed re-auth email domains") }}
+                  </label>
+                  <textarea
+                    v-model="openai401AllowedDomainsText"
+                    class="input min-h-[92px] w-full font-mono text-sm"
+                    placeholder="example.com&#10;mail.example.com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText("留空表示不限制；每行一个域名。", "Leave empty for no restriction; one domain per line.") }}
+                  </p>
+                </div>
+
+                <div v-if="form.openai_401_guard_settings.provider_type === 'external_command'">
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("Session Provider Command", "Session provider command") }}
+                  </label>
                 <textarea
                   v-model="openai401GuardCommandText"
                   rows="3"
@@ -7196,6 +7227,7 @@ const form = reactive<SettingsForm>({
   openai_401_guard_settings: {
     enabled: false,
     check_interval_seconds: 60,
+    provider_type: "builtin_cloudflare_temp_email",
     timeout_seconds: 300,
     max_accounts_per_cycle: 5,
     delete_on_failure: false,
@@ -7204,6 +7236,7 @@ const form = reactive<SettingsForm>({
     temp_email_base_url: "",
     temp_email_admin_auth: "",
     temp_email_admin_auth_configured: false,
+    allowed_email_domains: [],
   },
 });
 
@@ -7212,12 +7245,23 @@ const authSourceDefaults = reactive<AuthSourceDefaultsState>(
 );
 
 const openai401GuardCommandText = computed({
-  get: () =>
+	get: () =>
     (form.openai_401_guard_settings.session_provider_command || []).join("\n"),
   set: (value: string) => {
     form.openai_401_guard_settings.session_provider_command = value
       .split(/\r?\n/)
       .map((part) => part.trim())
+        .filter((part) => part !== "");
+    },
+  });
+
+const openai401AllowedDomainsText = computed({
+  get: () =>
+    (form.openai_401_guard_settings.allowed_email_domains || []).join("\n"),
+  set: (value: string) => {
+    form.openai_401_guard_settings.allowed_email_domains = value
+      .split(/[\r\n,;，；\s]+/)
+      .map((part) => part.trim().toLowerCase().replace(/^@/, ""))
       .filter((part) => part !== "");
   },
 });
@@ -8373,12 +8417,20 @@ async function saveSettings() {
           Number(form.openai_401_guard_settings.check_interval_seconds) || 60,
         timeout_seconds:
           Number(form.openai_401_guard_settings.timeout_seconds) || 300,
+        provider_type:
+          form.openai_401_guard_settings.provider_type ||
+          "builtin_cloudflare_temp_email",
         max_accounts_per_cycle:
           Number(form.openai_401_guard_settings.max_accounts_per_cycle) || 5,
         session_provider_command: (
           form.openai_401_guard_settings.session_provider_command || []
         )
           .map((part) => part.trim())
+          .filter((part) => part !== ""),
+        allowed_email_domains: (
+          form.openai_401_guard_settings.allowed_email_domains || []
+        )
+          .map((part) => part.trim().toLowerCase().replace(/^@/, ""))
           .filter((part) => part !== ""),
         temp_email_base_url:
           form.openai_401_guard_settings.temp_email_base_url.trim(),

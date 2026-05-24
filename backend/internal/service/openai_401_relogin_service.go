@@ -136,10 +136,10 @@ func (s *OpenAI401ReloginService) ProcessOnce(ctx context.Context) error {
 }
 
 func (s *OpenAI401ReloginService) processOnceWithSettings(ctx context.Context, settings *OpenAI401GuardSettings) error {
-	if s == nil || settings == nil || !settings.Enabled || s.accountRepo == nil || s.runner == nil {
+	if s == nil || settings == nil || !settings.Enabled || s.accountRepo == nil {
 		return nil
 	}
-	if len(settings.SessionProviderCommand) == 0 {
+	if settings.ProviderType == OpenAI401ProviderExternalCommand && len(settings.SessionProviderCommand) == 0 {
 		slog.Warn("openai_401_relogin.skip_cycle", "reason", "session_provider_command_empty")
 		return nil
 	}
@@ -174,6 +174,16 @@ func (s *OpenAI401ReloginService) processOnceWithSettings(ctx context.Context, s
 			processed++
 			continue
 		}
+		if !openAI401EmailDomainAllowed(email, cfg.AllowedEmailDomains) {
+			slog.Info("openai_401_relogin.skip_email_domain",
+				"account_id", account.ID,
+				"email_domain", openAI401EmailDomain(email))
+			if err := s.markAttempt(ctx, &account, eventKey, "skipped", "email domain is not in OpenAI 401 allowed domains"); err != nil {
+				slog.Warn("openai_401_relogin.mark_skip_failed", "account_id", account.ID, "error", err)
+			}
+			processed++
+			continue
+		}
 
 		processed++
 		if err := s.reloginAccount(ctx, &account, eventKey, cfg, settings); err != nil {
@@ -194,12 +204,14 @@ func (s *OpenAI401ReloginService) loadSettings(ctx context.Context) (*OpenAI401G
 	settings := DefaultOpenAI401GuardSettings()
 	settings.Enabled = s.cfg.Enabled
 	settings.CheckIntervalSeconds = s.cfg.CheckIntervalSeconds
+	settings.ProviderType = s.cfg.ProviderType
 	settings.TimeoutSeconds = s.cfg.TimeoutSeconds
 	settings.MaxAccountsPerCycle = s.cfg.MaxAccountsPerCycle
 	settings.DeleteOnFailure = s.cfg.DeleteOnFailure
 	settings.SessionProviderCommand = append([]string(nil), s.cfg.Command...)
 	settings.IncludeCredentialsEnv = s.cfg.IncludeCredentialsEnv
 	settings.TempEmailBaseURL = s.cfg.TempEmailBaseURL
+	settings.AllowedEmailDomains = append([]string(nil), s.cfg.AllowedEmailDomains...)
 	if envName := strings.TrimSpace(s.cfg.TempEmailAdminAuthEnv); envName != "" {
 		settings.TempEmailAdminAuth = strings.TrimSpace(os.Getenv(envName))
 	}
@@ -307,8 +319,15 @@ func (s *OpenAI401ReloginService) reloginAccount(ctx context.Context, account *A
 	return nil
 }
 
-func (s *OpenAI401ReloginService) runSessionRepair(ctx context.Context, account *Account, cfg config.TokenRelogin401Config, _ *OpenAI401GuardSettings) (map[string]any, map[string]any, error) {
-	payload, err := s.runner.Run(ctx, account, cfg)
+func (s *OpenAI401ReloginService) runSessionRepair(ctx context.Context, account *Account, cfg config.TokenRelogin401Config, settings *OpenAI401GuardSettings) (map[string]any, map[string]any, error) {
+	runner := s.runner
+	if settings != nil && settings.ProviderType == OpenAI401ProviderBuiltinCloudflareTempEmail {
+		runner = builtinOpenAI401ReloginRunner{}
+	}
+	if runner == nil {
+		return nil, nil, errors.New("relogin runner is not configured")
+	}
+	payload, err := runner.Run(ctx, account, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -928,6 +947,32 @@ func openAI401ReloginEmail(account *Account) string {
 	return ""
 }
 
+func openAI401EmailDomain(email string) string {
+	email = strings.ToLower(strings.TrimSpace(email))
+	_, domain, ok := strings.Cut(email, "@")
+	if !ok {
+		return ""
+	}
+	return strings.Trim(domain, ".")
+}
+
+func openAI401EmailDomainAllowed(email string, allowedDomains []string) bool {
+	normalized := normalizeOpenAI401AllowedEmailDomains(allowedDomains)
+	if len(normalized) == 0 {
+		return true
+	}
+	domain := openAI401EmailDomain(email)
+	if domain == "" {
+		return false
+	}
+	for _, allowed := range normalized {
+		if domain == allowed || strings.HasSuffix(domain, "."+allowed) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeOpenAI401ReloginConfig(cfg *config.TokenRelogin401Config) {
 	if cfg.CheckIntervalSeconds <= 0 {
 		cfg.CheckIntervalSeconds = 60
@@ -941,6 +986,7 @@ func normalizeOpenAI401ReloginConfig(cfg *config.TokenRelogin401Config) {
 	if strings.TrimSpace(cfg.TempEmailAdminAuthEnv) == "" {
 		cfg.TempEmailAdminAuthEnv = "SUB2API_TEMP_EMAIL_ADMIN_AUTH"
 	}
+	cfg.AllowedEmailDomains = normalizeOpenAI401AllowedEmailDomains(cfg.AllowedEmailDomains)
 }
 
 func credentialValueAsString(v any) string {

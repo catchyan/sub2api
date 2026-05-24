@@ -340,10 +340,11 @@ type StreamTimeoutSettings struct {
 	ThresholdWindowMinutes int    `json:"threshold_window_minutes"`
 }
 
-// OpenAI401GuardSettings is the admin DTO for the OpenAI OAuth 401 repair daemon.
+// OpenAI401GuardSettings is the admin DTO for the ChatGPT web-session 401 repair daemon.
 type OpenAI401GuardSettings struct {
 	Enabled                  bool     `json:"enabled"`
 	CheckIntervalSeconds     int      `json:"check_interval_seconds"`
+	ProviderType             string   `json:"provider_type"`
 	TimeoutSeconds           int      `json:"timeout_seconds"`
 	MaxAccountsPerCycle      int      `json:"max_accounts_per_cycle"`
 	DeleteOnFailure          bool     `json:"delete_on_failure"`
@@ -352,6 +353,7 @@ type OpenAI401GuardSettings struct {
 	TempEmailBaseURL         string   `json:"temp_email_base_url"`
 	TempEmailAdminAuth       string   `json:"temp_email_admin_auth,omitempty"`
 	TempEmailAdminConfigured bool     `json:"temp_email_admin_auth_configured"`
+	AllowedEmailDomains      []string `json:"allowed_email_domains"`
 }
 
 // RectifierSettings 请求整流器配置 DTO

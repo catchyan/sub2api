@@ -536,6 +536,7 @@ type TokenRefreshConfig struct {
 type TokenRelogin401Config struct {
 	Enabled               bool     `mapstructure:"enabled"`
 	CheckIntervalSeconds  int      `mapstructure:"check_interval_seconds"`
+	ProviderType          string   `mapstructure:"provider_type"`
 	Command               []string `mapstructure:"command"`
 	TimeoutSeconds        int      `mapstructure:"timeout_seconds"`
 	MaxAccountsPerCycle   int      `mapstructure:"max_accounts_per_cycle"`
@@ -543,6 +544,7 @@ type TokenRelogin401Config struct {
 	TempEmailBaseURL      string   `mapstructure:"temp_email_base_url"`
 	TempEmailAdminAuthEnv string   `mapstructure:"temp_email_admin_auth_env"`
 	TempEmailAdminAuth    string   `mapstructure:"-"`
+	AllowedEmailDomains   []string `mapstructure:"allowed_email_domains"`
 	DeleteOnFailure       bool     `mapstructure:"delete_on_failure"`
 }
 
@@ -1893,11 +1895,13 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
 	viper.SetDefault("token_refresh.relogin_401.enabled", false)
 	viper.SetDefault("token_refresh.relogin_401.check_interval_seconds", 60)
+	viper.SetDefault("token_refresh.relogin_401.provider_type", "")
 	viper.SetDefault("token_refresh.relogin_401.timeout_seconds", 300)
 	viper.SetDefault("token_refresh.relogin_401.max_accounts_per_cycle", 5)
 	viper.SetDefault("token_refresh.relogin_401.include_credentials_env", true)
 	viper.SetDefault("token_refresh.relogin_401.temp_email_base_url", "")
 	viper.SetDefault("token_refresh.relogin_401.temp_email_admin_auth_env", "SUB2API_TEMP_EMAIL_ADMIN_AUTH")
+	viper.SetDefault("token_refresh.relogin_401.allowed_email_domains", []string{})
 	viper.SetDefault("token_refresh.relogin_401.delete_on_failure", false)
 
 	// Gemini OAuth - configure via environment variables or config file

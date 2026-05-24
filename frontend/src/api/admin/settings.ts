@@ -563,6 +563,7 @@ export interface SystemSettings {
 export interface OpenAI401GuardSettings {
   enabled: boolean;
   check_interval_seconds: number;
+  provider_type: string;
   timeout_seconds: number;
   max_accounts_per_cycle: number;
   delete_on_failure: boolean;
@@ -571,6 +572,7 @@ export interface OpenAI401GuardSettings {
   temp_email_base_url: string;
   temp_email_admin_auth?: string;
   temp_email_admin_auth_configured: boolean;
+  allowed_email_domains: string[];
 }
 
 export interface UpdateSettingsRequest {

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -201,6 +203,34 @@ func TestOpenAI401ReloginService_ProcessOnceFailureOnlyOncePerEvent(t *testing.T
 	require.Contains(t, repo.accounts[0].GetCredential(relogin401LastErrorKey), "login failed")
 }
 
+func TestOpenAI401ReloginService_ProcessOnceSkipsDisallowedEmailDomain(t *testing.T) {
+	until := time.Now().Add(10 * time.Minute)
+	reason := mustTempUnschedReason(t, 401, until)
+	repo := &openAI401ReloginRepo{
+		accounts: []Account{{
+			ID:                      1,
+			Name:                    "user@other.example",
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Credentials:             map[string]any{"email": "user@other.example"},
+			TempUnschedulableUntil:  &until,
+			TempUnschedulableReason: reason,
+		}},
+	}
+	runner := &openAI401ReloginRunnerStub{credential: map[string]any{"access_token": "unused"}}
+	svc := newTestOpenAI401ReloginService(repo, runner, nil, nil)
+	svc.cfg.AllowedEmailDomains = []string{"owned.example"}
+	svc.cfg.Command = nil
+
+	require.NoError(t, svc.ProcessOnce(context.Background()))
+
+	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, "skipped", repo.accounts[0].GetCredential(relogin401LastResultKey))
+	require.Contains(t, repo.accounts[0].GetCredential(relogin401LastErrorKey), "email domain")
+}
+
 func TestOpenAI401ReloginService_ProcessOnceDeletesAfterFailureWhenEnabled(t *testing.T) {
 	updatedAt := time.Now().Add(-time.Minute)
 	repo := &openAI401ReloginRepo{
@@ -375,6 +405,82 @@ func TestOpenAI401ReloginService_ProcessOncePersistsSessionJSONExtra(t *testing.
 	require.Equal(t, "chatgpt_web_session", repo.accounts[0].Extra["source"])
 	require.Equal(t, true, repo.accounts[0].Extra["openai_passthrough"])
 	require.Equal(t, StatusActive, repo.accounts[0].Status)
+}
+
+func TestNormalizeOpenAI401ProviderTypeDefaultsExternalWhenCommandExists(t *testing.T) {
+	settings := DefaultOpenAI401GuardSettings()
+	settings.ProviderType = ""
+	settings.SessionProviderCommand = []string{"node", "provider.js"}
+
+	normalizeOpenAI401GuardSettings(settings)
+
+	require.Equal(t, OpenAI401ProviderExternalCommand, settings.ProviderType)
+}
+
+func TestNormalizeOpenAI401AllowedEmailDomains(t *testing.T) {
+	require.Equal(t,
+		[]string{"example.com", "sub.example.com"},
+		normalizeOpenAI401AllowedEmailDomains([]string{" @Example.com ", "example.com", "*.sub.example.com", "bad@value"}),
+	)
+	require.True(t, openAI401EmailDomainAllowed("user@mail.example.com", []string{"example.com"}))
+	require.False(t, openAI401EmailDomainAllowed("user@other.test", []string{"example.com"}))
+}
+
+func TestCloudflareTempEmailMailboxExtractsOTPFromFlexiblePayload(t *testing.T) {
+	var deletedID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "secret", r.Header.Get("x-admin-auth"))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/admin/mails":
+			_, _ = w.Write([]byte(`{"mails":[{"id":"m1","recipient":"user@example.com","subject":"OpenAI code","created_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/admin/mails/m1":
+			_, _ = w.Write([]byte(`{"data":{"id":"m1","body_html":"<p>Your OpenAI verification code is <b>123456</b></p>"}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/admin/mails/m1":
+			deletedID = "m1"
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	box := newCloudflareTempEmailMailbox(server.URL, "secret", client)
+	code, err := box.WaitForOTP(context.Background(), "user@example.com", time.Now().Add(-time.Minute), time.Second)
+
+	require.NoError(t, err)
+	require.Equal(t, "123456", code)
+	require.Equal(t, "m1", deletedID)
+}
+
+func TestOpenAI401PhoneVerificationDetection(t *testing.T) {
+	require.True(t, openAI401RequiresPhoneVerification("add_phone", ""))
+	require.True(t, openAI401RequiresPhoneVerification("", "https://auth.openai.com/add-phone"))
+	require.False(t, openAI401RequiresPhoneVerification("email_otp_verification", "/email-verification"))
+}
+
+func TestOpenAI401PasswordDetection(t *testing.T) {
+	require.True(t, openAI401RequiresPassword("login_password", ""))
+	require.True(t, openAI401RequiresPassword("", "https://auth.openai.com/log-in/password"))
+	require.False(t, openAI401RequiresPassword("email_otp_verification", "/email-verification"))
+}
+
+func TestBuiltinOpenAI401RunnerRefreshesFromStoredSessionToken(t *testing.T) {
+	accessToken := buildReloginTestJWT(t, time.Now().Add(time.Hour), map[string]any{"email": "user@example.com"})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/auth/session", r.URL.Path)
+		require.Contains(t, r.Header.Get("Cookie"), "__Secure-next-auth.session-token=st")
+		_, _ = w.Write([]byte(`{"accessToken":` + fmt.Sprintf("%q", accessToken) + `,"user":{"email":"user@example.com"}}`))
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	login := &openAI401ProtocolLogin{client: client, email: "user@example.com", chatGPTBaseURL: server.URL}
+	payload, err := login.refreshFromSessionToken(context.Background(), "st")
+
+	require.NoError(t, err)
+	require.Equal(t, accessToken, payload["accessToken"])
+	require.Equal(t, "st", payload["sessionToken"])
 }
 
 func newTestOpenAI401ReloginService(repo *openAI401ReloginRepo, runner openAI401ReloginRunner, invalidator TokenCacheInvalidator, cache TempUnschedCache) *OpenAI401ReloginService {

@@ -354,6 +354,7 @@ func openAI401GuardSettingsToDTO(s *service.OpenAI401GuardSettings) *dto.OpenAI4
 	return &dto.OpenAI401GuardSettings{
 		Enabled:                  s.Enabled,
 		CheckIntervalSeconds:     s.CheckIntervalSeconds,
+		ProviderType:             s.ProviderType,
 		TimeoutSeconds:           s.TimeoutSeconds,
 		MaxAccountsPerCycle:      s.MaxAccountsPerCycle,
 		DeleteOnFailure:          s.DeleteOnFailure,
@@ -361,6 +362,7 @@ func openAI401GuardSettingsToDTO(s *service.OpenAI401GuardSettings) *dto.OpenAI4
 		IncludeCredentialsEnv:    s.IncludeCredentialsEnv,
 		TempEmailBaseURL:         s.TempEmailBaseURL,
 		TempEmailAdminConfigured: s.TempEmailAdminConfigured,
+		AllowedEmailDomains:      append([]string(nil), s.AllowedEmailDomains...),
 	}
 }
 
@@ -371,6 +373,7 @@ func openAI401GuardSettingsFromDTO(s *dto.OpenAI401GuardSettings) *service.OpenA
 	return &service.OpenAI401GuardSettings{
 		Enabled:                s.Enabled,
 		CheckIntervalSeconds:   s.CheckIntervalSeconds,
+		ProviderType:           s.ProviderType,
 		TimeoutSeconds:         s.TimeoutSeconds,
 		MaxAccountsPerCycle:    s.MaxAccountsPerCycle,
 		DeleteOnFailure:        s.DeleteOnFailure,
@@ -378,6 +381,7 @@ func openAI401GuardSettingsFromDTO(s *dto.OpenAI401GuardSettings) *service.OpenA
 		IncludeCredentialsEnv:  s.IncludeCredentialsEnv,
 		TempEmailBaseURL:       s.TempEmailBaseURL,
 		TempEmailAdminAuth:     s.TempEmailAdminAuth,
+		AllowedEmailDomains:    append([]string(nil), s.AllowedEmailDomains...),
 	}
 }
 
