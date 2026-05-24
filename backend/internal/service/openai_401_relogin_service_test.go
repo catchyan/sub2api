@@ -432,6 +432,8 @@ func TestCloudflareTempEmailMailboxExtractsOTPFromFlexiblePayload(t *testing.T) 
 		require.Equal(t, "secret", r.Header.Get("x-admin-auth"))
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/mails":
+			require.Equal(t, "50", r.URL.Query().Get("limit"))
+			require.Equal(t, "0", r.URL.Query().Get("offset"))
 			_, _ = w.Write([]byte(`{"mails":[{"id":"m1","recipient":"user@example.com","subject":"OpenAI code","created_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/mails/m1":
 			_, _ = w.Write([]byte(`{"data":{"id":"m1","body_html":"<p>Your OpenAI verification code is <b>123456</b></p>"}}`))

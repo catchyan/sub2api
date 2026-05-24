@@ -685,6 +685,7 @@ func (m *cloudflareTempEmailMailbox) listMessages(ctx context.Context, email str
 	}
 	q := u.Query()
 	q.Set("limit", "50")
+	q.Set("offset", "0")
 	if email != "" {
 		q.Set("address", strings.ToLower(strings.TrimSpace(email)))
 		q.Set("recipient", strings.ToLower(strings.TrimSpace(email)))
