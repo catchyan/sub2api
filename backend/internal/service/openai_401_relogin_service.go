@@ -570,7 +570,7 @@ func convertOpenAI401SessionJSON(raw map[string]any) (*openAI401SessionDocument,
 		"user.email", "email", "credentials.email", "providerSpecificData.email",
 	)
 	if email == "" {
-		email = stringFromAny(claimsValue(claims, "email"))
+		email = openAI401StringFromAny(claimsValue(claims, "email"))
 	}
 	accountID := firstReloginString(raw,
 		"account.id", "account.account_id", "account.chatgpt_account_id",
@@ -589,7 +589,7 @@ func convertOpenAI401SessionJSON(raw map[string]any) (*openAI401SessionDocument,
 		userID = firstReloginString(auth, "chatgpt_user_id", "user_id")
 	}
 	if userID == "" {
-		userID = stringFromAny(claimsValue(claims, "sub"))
+		userID = openAI401StringFromAny(claimsValue(claims, "sub"))
 	}
 	planType := firstReloginString(raw,
 		"account.planType", "account.plan_type", "planType", "plan_type",
@@ -681,7 +681,7 @@ func mapHasAny(raw map[string]any, keys ...string) bool {
 func firstReloginString(raw map[string]any, paths ...string) string {
 	for _, path := range paths {
 		if value, ok := pathValue(raw, path); ok {
-			if str := stringFromAny(value); str != "" {
+			if str := openAI401StringFromAny(value); str != "" {
 				return str
 			}
 		}
@@ -721,7 +721,7 @@ func claimsValue(claims map[string]any, key string) any {
 	return claims[key]
 }
 
-func stringFromAny(value any) string {
+func openAI401StringFromAny(value any) string {
 	switch v := value.(type) {
 	case string:
 		return strings.TrimSpace(v)
