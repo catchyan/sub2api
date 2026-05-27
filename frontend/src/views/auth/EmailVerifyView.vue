@@ -173,6 +173,7 @@ import {
   loadAffiliateReferralCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { DEFAULT_SITE_NAME } from '@/constants/branding'
 
 const { t, locale } = useI18n()
 
@@ -229,7 +230,7 @@ const hasRegisterData = ref<boolean>(false)
 // Public settings
 const turnstileEnabled = ref<boolean>(false)
 const turnstileSiteKey = ref<string>('')
-const siteName = ref<string>('Sub2API')
+const siteName = ref<string>(DEFAULT_SITE_NAME)
 const registrationEmailSuffixWhitelist = ref<string[]>([])
 
 // Turnstile for resend
@@ -294,7 +295,7 @@ onMounted(async () => {
     const settings = await getPublicSettings()
     turnstileEnabled.value = settings.turnstile_enabled
     turnstileSiteKey.value = settings.turnstile_site_key || ''
-    siteName.value = settings.site_name || 'Sub2API'
+    siteName.value = settings.site_name || DEFAULT_SITE_NAME
     registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
       settings.registration_email_suffix_whitelist || []
     )
@@ -500,17 +501,24 @@ async function handleVerify(): Promise<void> {
     }
 
     if (isPendingOAuthFlow()) {
+      const pendingCreatePayload: Record<string, unknown> = {
+        email: email.value,
+        password: password.value,
+        verify_code: verifyCode.value.trim()
+      }
+      if (invitationCode.value) {
+        pendingCreatePayload.invitation_code = invitationCode.value
+      }
+      Object.assign(pendingCreatePayload, oauthAffiliatePayload(affCode.value || loadAffiliateReferralCode()))
+      if (typeof pendingAdoptionDecision.value?.adoptDisplayName === 'boolean') {
+        pendingCreatePayload.adopt_display_name = pendingAdoptionDecision.value.adoptDisplayName
+      }
+      if (typeof pendingAdoptionDecision.value?.adoptAvatar === 'boolean') {
+        pendingCreatePayload.adopt_avatar = pendingAdoptionDecision.value.adoptAvatar
+      }
       const { data } = await apiClient.post<PendingOAuthCreateAccountResponse>(
         '/auth/oauth/pending/create-account',
-        {
-          email: email.value,
-          password: password.value,
-          verify_code: verifyCode.value.trim(),
-          invitation_code: invitationCode.value || undefined,
-          ...oauthAffiliatePayload(affCode.value || loadAffiliateReferralCode()),
-          adopt_display_name: pendingAdoptionDecision.value?.adoptDisplayName,
-          adopt_avatar: pendingAdoptionDecision.value?.adoptAvatar
-        }
+        pendingCreatePayload
       )
       if (isPendingOAuthSessionResponse(data)) {
         sessionStorage.removeItem('register_data')

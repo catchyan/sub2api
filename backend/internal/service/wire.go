@@ -79,9 +79,10 @@ func ProvideOpenAI401ReloginService(
 	settingService *SettingService,
 	cacheInvalidator TokenCacheInvalidator,
 	tempUnschedCache TempUnschedCache,
+	openaiOAuthService *OpenAIOAuthService,
 	cfg *config.Config,
 ) *OpenAI401ReloginService {
-	svc := NewOpenAI401ReloginService(accountRepo, settingService, cacheInvalidator, tempUnschedCache, cfg)
+	svc := NewOpenAI401ReloginService(accountRepo, settingService, cacheInvalidator, tempUnschedCache, openaiOAuthService, cfg)
 	svc.Start()
 	return svc
 }

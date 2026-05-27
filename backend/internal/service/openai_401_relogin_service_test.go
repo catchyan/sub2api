@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,6 +137,60 @@ func (r *openAI401ReloginRunnerStub) Run(context.Context, *Account, config.Token
 	return cloneCredentials(r.credential), nil
 }
 
+type openAI401OAuthRefresherStub struct {
+	calls     int
+	tokenInfo *OpenAITokenInfo
+	err       error
+}
+
+func (s *openAI401OAuthRefresherStub) RefreshAccountToken(context.Context, *Account) (*OpenAITokenInfo, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.tokenInfo, nil
+}
+
+func (s *openAI401OAuthRefresherStub) BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
+	if tokenInfo == nil {
+		tokenInfo = &OpenAITokenInfo{}
+	}
+	expiresAt := time.Now().Add(time.Hour).Unix()
+	if tokenInfo.ExpiresAt > 0 {
+		expiresAt = tokenInfo.ExpiresAt
+	}
+	creds := map[string]any{
+		"access_token": tokenInfo.AccessToken,
+		"expires_at":   time.Unix(expiresAt, 0).UTC().Format(time.RFC3339),
+	}
+	if tokenInfo.RefreshToken != "" {
+		creds["refresh_token"] = tokenInfo.RefreshToken
+	}
+	if tokenInfo.IDToken != "" {
+		creds["id_token"] = tokenInfo.IDToken
+	}
+	if tokenInfo.Email != "" {
+		creds["email"] = tokenInfo.Email
+	}
+	if tokenInfo.ClientID != "" {
+		creds["client_id"] = tokenInfo.ClientID
+	}
+	return creds
+}
+
+type blockingOpenAI401ReloginRunner struct {
+	called chan struct{}
+	once   sync.Once
+}
+
+func (r *blockingOpenAI401ReloginRunner) Run(ctx context.Context, _ *Account, _ config.TokenRelogin401Config) (map[string]any, error) {
+	r.once.Do(func() {
+		close(r.called)
+	})
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func TestOpenAI401ReloginService_ProcessOnceSuccess(t *testing.T) {
 	until := time.Now().Add(10 * time.Minute)
 	reason := mustTempUnschedReason(t, 401, until)
@@ -172,6 +227,91 @@ func TestOpenAI401ReloginService_ProcessOnceSuccess(t *testing.T) {
 	require.NotEmpty(t, repo.accounts[0].GetCredential("expires_at"))
 	require.Equal(t, "success", repo.accounts[0].GetCredential(relogin401LastResultKey))
 	require.Nil(t, repo.accounts[0].TempUnschedulableUntil)
+}
+
+func TestOpenAI401ReloginService_ProcessOncePrefersOAuthRefresh(t *testing.T) {
+	until := time.Now().Add(10 * time.Minute)
+	reason := mustTempUnschedReason(t, 401, until)
+	repo := &openAI401ReloginRepo{
+		accounts: []Account{{
+			ID:                      1,
+			Name:                    "acct",
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Credentials:             map[string]any{"email": "user@example.com", "refresh_token": "old-refresh"},
+			TempUnschedulableUntil:  &until,
+			TempUnschedulableReason: reason,
+		}},
+	}
+	runner := &openAI401ReloginRunnerStub{credential: map[string]any{
+		"access_token": "session-access",
+	}}
+	oauth := &openAI401OAuthRefresherStub{
+		tokenInfo: &OpenAITokenInfo{
+			AccessToken:  "oauth-access",
+			RefreshToken: "oauth-refresh",
+			ExpiresAt:    time.Now().Add(time.Hour).Unix(),
+			Email:        "user@example.com",
+			ClientID:     "codex-client",
+			PrivacyMode:  PrivacyModeTrainingOff,
+		},
+	}
+	invalidator := &tokenCacheInvalidatorStub{}
+	svc := newTestOpenAI401ReloginService(repo, runner, invalidator, nil)
+	svc.openaiOAuth = oauth
+
+	require.NoError(t, svc.ProcessOnce(context.Background()))
+
+	require.Equal(t, 1, oauth.calls)
+	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, 1, repo.clearTempCalls)
+	require.Equal(t, 1, invalidator.calls)
+	require.Equal(t, "oauth-access", repo.accounts[0].GetCredential("access_token"))
+	require.Equal(t, "oauth-refresh", repo.accounts[0].GetCredential("refresh_token"))
+	require.Equal(t, "codex-client", repo.accounts[0].GetCredential("client_id"))
+	require.Equal(t, "openai_oauth_refresh", repo.accounts[0].Extra["source"])
+	require.Equal(t, PrivacyModeTrainingOff, repo.accounts[0].Extra["privacy_mode"])
+	require.Equal(t, "success", repo.accounts[0].GetCredential(relogin401LastResultKey))
+	require.Nil(t, repo.accounts[0].TempUnschedulableUntil)
+}
+
+func TestOpenAI401ReloginService_StopCancelsInFlightRelogin(t *testing.T) {
+	until := time.Now().Add(10 * time.Minute)
+	repo := &openAI401ReloginRepo{
+		accounts: []Account{{
+			ID:                      1,
+			Name:                    "user@example.com",
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Credentials:             map[string]any{"email": "user@example.com"},
+			TempUnschedulableUntil:  &until,
+			TempUnschedulableReason: mustTempUnschedReason(t, 401, until),
+		}},
+	}
+	runner := &blockingOpenAI401ReloginRunner{called: make(chan struct{})}
+	svc := newTestOpenAI401ReloginService(repo, runner, nil, nil)
+
+	svc.Start()
+	select {
+	case <-runner.called:
+	case <-time.After(time.Second):
+		t.Fatal("runner was not called")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		svc.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not cancel in-flight relogin")
+	}
 }
 
 func TestOpenAI401ReloginService_ProcessOnceFailureOnlyOncePerEvent(t *testing.T) {
@@ -255,6 +395,38 @@ func TestOpenAI401ReloginService_ProcessOnceDeletesAfterFailureWhenEnabled(t *te
 	require.Equal(t, 1, repo.updateCredentialsCalls)
 	require.Equal(t, 1, repo.deleteCalls)
 	require.Empty(t, repo.accounts)
+}
+
+func TestOpenAI401ReloginService_ProcessOnceSkipsNoRefreshTokenAndNoSessionProvider(t *testing.T) {
+	updatedAt := time.Now().Add(-time.Minute)
+	repo := &openAI401ReloginRepo{
+		accounts: []Account{{
+			ID:           45,
+			Name:         "user@example.com",
+			Platform:     PlatformOpenAI,
+			Type:         AccountTypeOAuth,
+			Status:       StatusError,
+			ErrorMessage: "Token revoked (401): Your authentication token has been invalidated.",
+			UpdatedAt:    updatedAt,
+			Credentials:  map[string]any{"email": "user@example.com"},
+		}},
+	}
+	runner := &openAI401ReloginRunnerStub{err: errors.New("login failed")}
+	svc := newTestOpenAI401ReloginService(repo, runner, nil, nil)
+	svc.openaiOAuth = &openAI401OAuthRefresherStub{}
+	svc.cfg.ProviderType = OpenAI401ProviderExternalCommand
+	svc.cfg.Command = nil
+	svc.cfg.DeleteOnFailure = true
+
+	require.NoError(t, svc.ProcessOnce(context.Background()))
+
+	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, 0, repo.updateCalls)
+	require.Equal(t, 0, repo.deleteCalls)
+	require.Len(t, repo.accounts, 1)
+	require.Equal(t, "skipped", repo.accounts[0].GetCredential(relogin401LastResultKey))
+	require.Contains(t, repo.accounts[0].GetCredential(relogin401LastErrorKey), "missing refresh_token")
 }
 
 func TestOpenAI401ReloginService_ProcessOnceSkipsNon401(t *testing.T) {
@@ -486,7 +658,7 @@ func TestBuiltinOpenAI401RunnerRefreshesFromStoredSessionToken(t *testing.T) {
 }
 
 func newTestOpenAI401ReloginService(repo *openAI401ReloginRepo, runner openAI401ReloginRunner, invalidator TokenCacheInvalidator, cache TempUnschedCache) *OpenAI401ReloginService {
-	svc := NewOpenAI401ReloginService(repo, nil, invalidator, cache, &config.Config{
+	svc := NewOpenAI401ReloginService(repo, nil, invalidator, cache, nil, &config.Config{
 		TokenRefresh: config.TokenRefreshConfig{
 			Relogin401: config.TokenRelogin401Config{
 				Enabled:              true,

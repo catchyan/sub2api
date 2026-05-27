@@ -34,14 +34,22 @@ type openAI401ReloginRunner interface {
 	Run(ctx context.Context, account *Account, cfg config.TokenRelogin401Config) (map[string]any, error)
 }
 
+type openAI401OAuthRefresher interface {
+	RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error)
+	BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any
+}
+
 type OpenAI401ReloginService struct {
 	accountRepo      AccountRepository
 	settingService   *SettingService
 	cacheInvalidator TokenCacheInvalidator
 	tempUnschedCache TempUnschedCache
+	openaiOAuth      openAI401OAuthRefresher
 	cfg              config.TokenRelogin401Config
 	runner           openAI401ReloginRunner
 
+	runCtx context.Context
+	cancel context.CancelFunc
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
@@ -51,6 +59,7 @@ func NewOpenAI401ReloginService(
 	settingService *SettingService,
 	cacheInvalidator TokenCacheInvalidator,
 	tempUnschedCache TempUnschedCache,
+	openaiOAuth openAI401OAuthRefresher,
 	cfg *config.Config,
 ) *OpenAI401ReloginService {
 	reloginCfg := config.TokenRelogin401Config{}
@@ -58,13 +67,17 @@ func NewOpenAI401ReloginService(
 		reloginCfg = cfg.TokenRefresh.Relogin401
 	}
 	normalizeOpenAI401ReloginConfig(&reloginCfg)
+	runCtx, cancel := context.WithCancel(context.Background())
 	return &OpenAI401ReloginService{
 		accountRepo:      accountRepo,
 		settingService:   settingService,
 		cacheInvalidator: cacheInvalidator,
 		tempUnschedCache: tempUnschedCache,
+		openaiOAuth:      openaiOAuth,
 		cfg:              reloginCfg,
 		runner:           commandOpenAI401ReloginRunner{},
+		runCtx:           runCtx,
+		cancel:           cancel,
 		stopCh:           make(chan struct{}),
 	}
 }
@@ -88,6 +101,9 @@ func (s *OpenAI401ReloginService) Stop() {
 	if s == nil {
 		return
 	}
+	if s.cancel != nil {
+		s.cancel()
+	}
 	select {
 	case <-s.stopCh:
 	default:
@@ -99,19 +115,31 @@ func (s *OpenAI401ReloginService) Stop() {
 func (s *OpenAI401ReloginService) loop() {
 	defer s.wg.Done()
 
+	runCtx := s.runCtx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	interval := time.Duration(s.cfg.CheckIntervalSeconds) * time.Second
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
 	for {
 		select {
+		case <-runCtx.Done():
+			return
 		case <-s.stopCh:
 			return
 		case <-timer.C:
-			settings, err := s.loadSettings(context.Background())
+			settings, err := s.loadSettings(runCtx)
 			if err != nil {
+				if runCtx.Err() != nil {
+					return
+				}
 				slog.Warn("openai_401_relogin.load_settings_failed", "error", err)
-			} else if err := s.processOnceWithSettings(context.Background(), settings); err != nil {
+			} else if err := s.processOnceWithSettings(runCtx, settings); err != nil {
+				if runCtx.Err() != nil {
+					return
+				}
 				slog.Warn("openai_401_relogin.cycle_failed", "error", err)
 			}
 			next := s.cfg.CheckIntervalSeconds
@@ -139,7 +167,7 @@ func (s *OpenAI401ReloginService) processOnceWithSettings(ctx context.Context, s
 	if s == nil || settings == nil || !settings.Enabled || s.accountRepo == nil {
 		return nil
 	}
-	if settings.ProviderType == OpenAI401ProviderExternalCommand && len(settings.SessionProviderCommand) == 0 {
+	if s.openaiOAuth == nil && settings.ProviderType == OpenAI401ProviderExternalCommand && len(settings.SessionProviderCommand) == 0 {
 		slog.Warn("openai_401_relogin.skip_cycle", "reason", "session_provider_command_empty")
 		return nil
 	}
@@ -179,6 +207,14 @@ func (s *OpenAI401ReloginService) processOnceWithSettings(ctx context.Context, s
 				"account_id", account.ID,
 				"email_domain", openAI401EmailDomain(email))
 			if err := s.markAttempt(ctx, &account, eventKey, "skipped", "email domain is not in OpenAI 401 allowed domains"); err != nil {
+				slog.Warn("openai_401_relogin.mark_skip_failed", "account_id", account.ID, "error", err)
+			}
+			processed++
+			continue
+		}
+		if strings.TrimSpace(account.GetOpenAIRefreshToken()) == "" && !openAI401SessionRepairAvailable(settings, cfg) {
+			slog.Warn("openai_401_relogin.skip_no_repair_provider", "account_id", account.ID)
+			if err := s.markAttempt(ctx, &account, eventKey, "skipped", "missing refresh_token and no session repair provider configured"); err != nil {
 				slog.Warn("openai_401_relogin.mark_skip_failed", "account_id", account.ID, "error", err)
 			}
 			processed++
@@ -264,7 +300,7 @@ func (s *OpenAI401ReloginService) reloginAccount(ctx context.Context, account *A
 	defer cancel()
 
 	start := time.Now()
-	credentials, extra, err := s.runSessionRepair(commandCtx, account, cfg, settings)
+	credentials, extra, err := s.runAccountRepair(commandCtx, account, cfg, settings)
 	if err != nil {
 		if markErr := s.markAttempt(ctx, account, eventKey, "failed", err.Error()); markErr != nil {
 			return errors.Join(err, markErr)
@@ -317,6 +353,70 @@ func (s *OpenAI401ReloginService) reloginAccount(ctx context.Context, account *A
 		"account_name", account.Name,
 		"duration_ms", time.Since(start).Milliseconds())
 	return nil
+}
+
+func (s *OpenAI401ReloginService) runAccountRepair(ctx context.Context, account *Account, cfg config.TokenRelogin401Config, settings *OpenAI401GuardSettings) (map[string]any, map[string]any, error) {
+	var oauthErr error
+	if s.openaiOAuth != nil && strings.TrimSpace(account.GetOpenAIRefreshToken()) != "" {
+		credentials, extra, err := s.runOAuthRefreshRepair(ctx, account)
+		if err == nil {
+			return credentials, extra, nil
+		}
+		oauthErr = err
+		slog.Warn("openai_401_relogin.oauth_refresh_failed_fallback_session",
+			"account_id", account.ID,
+			"error", err)
+	}
+
+	credentials, extra, err := s.runSessionRepair(ctx, account, cfg, settings)
+	if err != nil && oauthErr != nil {
+		return nil, nil, errors.Join(
+			fmt.Errorf("oauth refresh failed: %w", oauthErr),
+			fmt.Errorf("session repair fallback failed: %w", err),
+		)
+	}
+	return credentials, extra, err
+}
+
+func (s *OpenAI401ReloginService) runOAuthRefreshRepair(ctx context.Context, account *Account) (map[string]any, map[string]any, error) {
+	if s.openaiOAuth == nil {
+		return nil, nil, errors.New("openai oauth refresher is not configured")
+	}
+	tokenInfo, err := s.openaiOAuth.RefreshAccountToken(ctx, account)
+	if err != nil {
+		return nil, nil, err
+	}
+	credentials := s.openaiOAuth.BuildAccountCredentials(tokenInfo)
+	credentials, err = normalizeReloginCredentials(credentials)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	extra := map[string]any{
+		"source":           "openai_oauth_refresh",
+		"oauth_refresh_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	if tokenInfo != nil && strings.TrimSpace(tokenInfo.PrivacyMode) != "" {
+		extra["privacy_mode"] = strings.TrimSpace(tokenInfo.PrivacyMode)
+	}
+	return credentials, extra, nil
+}
+
+func openAI401SessionRepairAvailable(settings *OpenAI401GuardSettings, cfg config.TokenRelogin401Config) bool {
+	providerType := ""
+	if settings != nil {
+		providerType = settings.ProviderType
+	}
+	if providerType == "" {
+		providerType = cfg.ProviderType
+	}
+	if providerType == OpenAI401ProviderBuiltinCloudflareTempEmail {
+		return true
+	}
+	if providerType != OpenAI401ProviderExternalCommand {
+		return true
+	}
+	return len(cfg.Command) > 0
 }
 
 func (s *OpenAI401ReloginService) runSessionRepair(ctx context.Context, account *Account, cfg config.TokenRelogin401Config, settings *OpenAI401GuardSettings) (map[string]any, map[string]any, error) {

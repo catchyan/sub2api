@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resolveDocumentTitle } from '@/router/title'
+import { DEFAULT_SITE_NAME } from '@/constants/branding'
 
 describe('resolveDocumentTitle', () => {
   it('路由存在标题时，使用“路由标题 - 站点名”格式', () => {
@@ -11,8 +12,8 @@ describe('resolveDocumentTitle', () => {
   })
 
   it('站点名为空时，回退默认站点名', () => {
-    expect(resolveDocumentTitle('Dashboard', '')).toBe('Dashboard - Sub2API')
-    expect(resolveDocumentTitle(undefined, '   ')).toBe('Sub2API')
+    expect(resolveDocumentTitle('Dashboard', '')).toBe(`Dashboard - ${DEFAULT_SITE_NAME}`)
+    expect(resolveDocumentTitle(undefined, '   ')).toBe(DEFAULT_SITE_NAME)
   })
 
   it('站点名变更时仅影响后续路由标题计算', () => {
