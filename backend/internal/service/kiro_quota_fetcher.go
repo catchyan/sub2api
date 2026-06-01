@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // KiroUsageLimitsResponse Kiro getUsageLimits API 返回结构
@@ -141,7 +139,7 @@ func (f *KiroQuotaFetcher) FetchQuota(ctx context.Context, account *Account) (*Q
 
 func (f *KiroQuotaFetcher) callGetUsageLimits(ctx context.Context, account *Account, accessToken string) (*KiroUsageLimitsResponse, error) {
 	region := kiroAPIRegion(account)
-	baseURL := fmt.Sprintf("https://runtime.%s.kiro.dev/getUsageLimits", region)
+	baseURL := fmt.Sprintf("https://codewhisperer.%s.amazonaws.com/getUsageLimits", region)
 
 	params := url.Values{}
 	params.Set("isEmailRequired", "true")
@@ -158,12 +156,7 @@ func (f *KiroQuotaFetcher) callGetUsageLimits(ctx context.Context, account *Acco
 	}
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Host", fmt.Sprintf("runtime.%s.kiro.dev", region))
-	req.Header.Set("X-Amz-User-Agent", kiroXAmzUserAgent(account))
-	req.Header.Set("User-Agent", kiroUserAgent(account))
-	req.Header.Set("Amz-Sdk-Invocation-Id", uuid.NewString())
-	req.Header.Set("Amz-Sdk-Request", "attempt=1; max=1")
-	req.Header.Set("Connection", "close")
+	decorateKiroRuntimeHeaders(req, account)
 
 	resp, err := f.do(ctx, account, req)
 	if err != nil {

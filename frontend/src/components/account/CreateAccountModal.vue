@@ -1103,7 +1103,7 @@
             </div>
             <div>
               <label class="input-label">API 区域覆盖（可选）</label>
-              <input v-model="kiroAPIRegion" type="text" class="input" placeholder="默认从 profile ARN / 凭据检测" />
+              <input v-model="kiroAPIRegion" type="text" class="input" placeholder="默认 us-east-1" />
             </div>
             <div>
               <label class="input-label">Profile ARN（可选）</label>

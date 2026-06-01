@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -32,11 +33,14 @@ var kiroFallbackModels = []string{
 	"claude-sonnet-4.6",
 	"claude-opus-4.6",
 	"claude-opus-4.7",
+	"claude-opus-4.8",
 	"claude-3.7-sonnet",
 }
 
 const kiroModelCacheTTL = 10 * time.Minute
 const kiroMaxToolNameLength = 64
+const kiroStreamingSDKVersion = "1.0.34"
+const kiroRuntimeSDKVersion = "1.0.0"
 const kiroThinkingStartTag = "<thinking>"
 const kiroThinkingEndTag = "</thinking>"
 const kiroThinkingModeTag = "<thinking_mode>"
@@ -45,6 +49,13 @@ const kiroThinkingEffortTag = "<thinking_effort>"
 const kiroThinkingMinBudgetTokens = 1024
 const kiroThinkingMaxBudgetTokens = 24576
 const kiroThinkingDefaultBudgetTokens = 20000
+
+type kiroEndpoint struct {
+	URL       string
+	Origin    string
+	AmzTarget string
+	Name      string
+}
 
 type KiroModel struct {
 	ID          string `json:"id"`
@@ -63,6 +74,7 @@ func KiroDefaultModels() []KiroModel {
 		{ID: "claude-sonnet-4.6", Type: "model", DisplayName: "Claude Sonnet 4.6"},
 		{ID: "claude-opus-4.6", Type: "model", DisplayName: "Claude Opus 4.6"},
 		{ID: "claude-opus-4.7", Type: "model", DisplayName: "Claude Opus 4.7"},
+		{ID: "claude-opus-4.8", Type: "model", DisplayName: "Claude Opus 4.8"},
 		{ID: "claude-3.7-sonnet", Type: "model", DisplayName: "Claude Sonnet 3.7"},
 	}
 }
@@ -277,18 +289,17 @@ func (s *KiroGatewayService) fetchAccountModels(ctx context.Context, account *Ac
 	apiRegion := kiroAPIRegion(account)
 	values := url.Values{}
 	values.Set("origin", "AI_EDITOR")
-	if account.GetCredential("auth_type") == KiroAuthDesktop {
-		if profileARN := account.GetCredential("profile_arn"); profileARN != "" {
-			values.Set("profileArn", profileARN)
-		}
+	values.Set("maxResults", "50")
+	if profileARN, err := s.resolveKiroProfileARN(ctx, account, token); err == nil && profileARN != "" {
+		values.Set("profileArn", profileARN)
 	}
-	endpoint := fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?%s", apiRegion, values.Encode())
+	endpoint := fmt.Sprintf("https://codewhisperer.%s.amazonaws.com/ListAvailableModels?%s", apiRegion, values.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	decorateKiroAPIHeaders(req, account)
+	decorateKiroRuntimeHeaders(req, account)
 	resp, err := s.do(ctx, account, req)
 	if err != nil {
 		return nil, err
@@ -337,19 +348,52 @@ func (s *KiroGatewayService) callGenerate(ctx context.Context, account *Account,
 	if err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
+	if _, ok := payload["profileArn"]; !ok {
+		if profileARN, err := s.resolveKiroProfileARN(ctx, account, token); err == nil && profileARN != "" {
+			payload["profileArn"] = profileARN
+		}
 	}
-	url := fmt.Sprintf("https://q.%s.amazonaws.com/generateAssistantResponse", kiroAPIRegion(account))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	endpoints := kiroGenerateEndpoints(kiroAPIRegion(account))
+	var lastErr error
+	for _, endpoint := range endpoints {
+		setKiroPayloadOrigin(payload, endpoint.Origin)
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.URL, bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "*/*")
+		if endpoint.AmzTarget != "" {
+			req.Header.Set("X-Amz-Target", endpoint.AmzTarget)
+		}
+		decorateKiroStreamingHeaders(req, account)
+		resp, err := s.do(ctx, account, req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("kiro endpoint %s quota exhausted", endpoint.Name)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusPaymentRequired {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, endpoint.Name, truncateForError(errBody))
+			continue
+		}
+		return resp, nil
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.amazon.eventstream")
-	decorateKiroAPIHeaders(req, account)
-	return s.do(ctx, account, req)
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("all kiro endpoints failed")
 }
 
 type kiroPayloadBuilder func(account *Account) (map[string]any, error)
@@ -375,7 +419,7 @@ func (s *KiroGatewayService) callGenerateAcrossAccounts(ctx context.Context, gro
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode == http.StatusForbidden {
+		if isKiroAuthRefreshStatus(resp.StatusCode) {
 			_ = s.tokenProvider.Refresh(ctx, account)
 			_ = resp.Body.Close()
 			resp, err = s.callGenerate(ctx, account, payload)
@@ -446,30 +490,136 @@ func (s *KiroGatewayService) do(ctx context.Context, account *Account, req *http
 	return http.DefaultClient.Do(req)
 }
 
+func (s *KiroGatewayService) resolveKiroProfileARN(ctx context.Context, account *Account, accessToken string) (string, error) {
+	if account == nil {
+		return "", errors.New("account is nil")
+	}
+	if profileARN := strings.TrimSpace(account.GetCredential("profile_arn")); profileARN != "" {
+		return profileARN, nil
+	}
+	profileARN, err := s.listKiroProfilesWithRetry(ctx, account, accessToken)
+	if err != nil {
+		return "", err
+	}
+	if profileARN == "" {
+		return "", errors.New("no available kiro profile")
+	}
+	if account.Credentials == nil {
+		account.Credentials = map[string]any{}
+	}
+	account.Credentials["profile_arn"] = profileARN
+	if s.accountRepo != nil {
+		_ = persistAccountCredentials(ctx, s.accountRepo, account, account.Credentials)
+	}
+	return profileARN, nil
+}
+
+func (s *KiroGatewayService) listKiroProfilesWithRetry(ctx context.Context, account *Account, accessToken string) (string, error) {
+	const maxAttempts = 3
+	backoff := 200 * time.Millisecond
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		profileARN, err := s.listKiroProfiles(ctx, account, accessToken)
+		if err == nil {
+			return profileARN, nil
+		}
+		lastErr = err
+		if !isTransientKiroProfileFetchError(err) || attempt == maxAttempts {
+			return "", err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+		backoff *= 2
+	}
+	return "", lastErr
+}
+
+func (s *KiroGatewayService) listKiroProfiles(ctx context.Context, account *Account, accessToken string) (string, error) {
+	endpoint := fmt.Sprintf("https://codewhisperer.%s.amazonaws.com/ListAvailableProfiles", kiroAPIRegion(account))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(`{"maxResults":10}`))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	decorateKiroRuntimeHeaders(req, account)
+	resp, err := s.do(ctx, account, req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateForError(body))
+	}
+	var result struct {
+		Profiles []struct {
+			ARN string `json:"arn"`
+		} `json:"profiles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	for _, profile := range result.Profiles {
+		if profileARN := strings.TrimSpace(profile.ARN); profileARN != "" {
+			return profileARN, nil
+		}
+	}
+	return "", errors.New("empty profile list")
+}
+
+func isTransientKiroProfileFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "empty profile list") {
+		return false
+	}
+	if strings.HasPrefix(msg, "HTTP ") {
+		return strings.HasPrefix(msg, "HTTP 5") || strings.HasPrefix(msg, "HTTP 429")
+	}
+	return true
+}
+
 type openAIChatRequest struct {
-	Model    string           `json:"model"`
-	Messages []map[string]any `json:"messages"`
-	Stream   bool             `json:"stream"`
-	Tools    []map[string]any `json:"tools"`
+	Model       string           `json:"model"`
+	Messages    []map[string]any `json:"messages"`
+	Stream      bool             `json:"stream"`
+	Tools       []map[string]any `json:"tools"`
+	MaxTokens   int              `json:"max_tokens,omitempty"`
+	Temperature float64          `json:"temperature,omitempty"`
+	TopP        float64          `json:"top_p,omitempty"`
 }
 
 type anthropicMessagesRequest struct {
-	Model    string                  `json:"model"`
-	Messages []map[string]any        `json:"messages"`
-	System   any                     `json:"system"`
-	Stream   bool                    `json:"stream"`
-	Tools    []map[string]any        `json:"tools"`
-	Thinking *anthropicThinkingInput `json:"thinking,omitempty"`
+	Model       string                  `json:"model"`
+	Messages    []map[string]any        `json:"messages"`
+	System      any                     `json:"system"`
+	Stream      bool                    `json:"stream"`
+	Tools       []map[string]any        `json:"tools"`
+	Thinking    *anthropicThinkingInput `json:"thinking,omitempty"`
+	MaxTokens   int                     `json:"max_tokens,omitempty"`
+	Temperature float64                 `json:"temperature,omitempty"`
+	TopP        float64                 `json:"top_p,omitempty"`
 }
 
 func buildKiroPayloadFromOpenAI(req openAIChatRequest, account *Account) (map[string]any, error) {
 	systemPrompt, messages := splitOpenAIMessages(req.Messages)
-	return buildKiroPayload(req.Model, systemPrompt, messages, req.Tools, account), nil
+	payload := buildKiroPayload(req.Model, systemPrompt, messages, req.Tools, account)
+	applyKiroInferenceConfig(payload, req.MaxTokens, req.Temperature, req.TopP)
+	return payload, nil
 }
 
 func buildKiroPayloadFromAnthropic(req anthropicMessagesRequest, account *Account) (map[string]any, error) {
 	systemPrompt := extractText(req.System)
-	return buildKiroPayloadWithThinking(req.Model, systemPrompt, req.Messages, req.Tools, req.Thinking, account), nil
+	payload := buildKiroPayloadWithThinking(req.Model, systemPrompt, req.Messages, req.Tools, req.Thinking, account)
+	applyKiroInferenceConfig(payload, req.MaxTokens, req.Temperature, req.TopP)
+	return payload, nil
 }
 
 func buildKiroPayload(model, systemPrompt string, messages []map[string]any, tools []map[string]any, account *Account) map[string]any {
@@ -519,8 +669,10 @@ func buildKiroPayloadWithThinking(model, systemPrompt string, messages []map[str
 		userInput["userInputMessageContext"] = context
 	}
 	state := map[string]any{
-		"chatTriggerType": "MANUAL",
-		"conversationId":  uuid.NewString(),
+		"agentContinuationId": uuid.NewString(),
+		"agentTaskType":       "vibe",
+		"chatTriggerType":     "MANUAL",
+		"conversationId":      uuid.NewString(),
 		"currentMessage": map[string]any{
 			"userInputMessage": userInput,
 		},
@@ -535,6 +687,25 @@ func buildKiroPayloadWithThinking(model, systemPrompt string, messages []map[str
 		}
 	}
 	return payload
+}
+
+func applyKiroInferenceConfig(payload map[string]any, maxTokens int, temperature, topP float64) {
+	if payload == nil || (maxTokens <= 0 && temperature <= 0 && topP <= 0) {
+		return
+	}
+	config := map[string]any{}
+	if maxTokens > 0 {
+		config["maxTokens"] = maxTokens
+	}
+	if temperature > 0 {
+		config["temperature"] = temperature
+	}
+	if topP > 0 {
+		config["topP"] = topP
+	}
+	if len(config) > 0 {
+		payload["inferenceConfig"] = config
+	}
 }
 
 type kiroChatMessage struct {
@@ -943,17 +1114,41 @@ func buildKiroToolNameMaps(tools []map[string]any) *kiroToolNameMaps {
 }
 
 func shortenKiroToolName(name string) string {
-	name = strings.TrimSpace(name)
+	name = sanitizeKiroToolName(name)
 	if len(name) <= kiroMaxToolNameLength {
 		return name
 	}
 	sum := sha256.Sum256([]byte(name))
 	hash := hex.EncodeToString(sum[:])[:12]
-	prefixLength := kiroMaxToolNameLength - len(hash) - 1
+	prefixLength := kiroMaxToolNameLength - len(hash)
 	if prefixLength < 0 {
 		prefixLength = 0
 	}
-	return name[:prefixLength] + "_" + hash
+	return name[:prefixLength] + hash
+}
+
+func sanitizeKiroToolName(name string) string {
+	parts := strings.FieldsFunc(strings.TrimSpace(name), func(r rune) bool {
+		return r == '_' || r == '-'
+	})
+	if len(parts) == 0 {
+		return "tool"
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString(strings.ToLower(part[:1]) + part[1:])
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
 }
 
 func kiroToolNameToKiro(name string, maps *kiroToolNameMaps) string {
@@ -1030,6 +1225,8 @@ func normalizeKiroToolSchema(schema any) any {
 	if !ok {
 		return schema
 	}
+	m = cloneKiroSchemaMap(m)
+	cleanKiroSchema(m)
 	if _, ok := m["type"]; !ok {
 		m["type"] = "object"
 	}
@@ -1039,6 +1236,61 @@ func normalizeKiroToolSchema(schema any) any {
 		}
 	}
 	return m
+}
+
+func cloneKiroSchemaMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		out[key] = cloneKiroSchemaValue(value)
+	}
+	return out
+}
+
+func cloneKiroSchemaValue(value any) any {
+	switch x := value.(type) {
+	case map[string]any:
+		return cloneKiroSchemaMap(x)
+	case []any:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			out = append(out, cloneKiroSchemaValue(item))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func cleanKiroSchema(m map[string]any) {
+	delete(m, "additionalProperties")
+	if required, ok := m["required"]; ok {
+		switch v := required.(type) {
+		case nil:
+			delete(m, "required")
+		case []any:
+			if len(v) == 0 {
+				delete(m, "required")
+			}
+		case []string:
+			if len(v) == 0 {
+				delete(m, "required")
+			}
+		default:
+			delete(m, "required")
+		}
+	}
+	for _, value := range m {
+		switch x := value.(type) {
+		case map[string]any:
+			cleanKiroSchema(x)
+		case []any:
+			for _, item := range x {
+				if child, ok := item.(map[string]any); ok {
+					cleanKiroSchema(child)
+				}
+			}
+		}
+	}
 }
 
 func kiroPlaceholderTool() map[string]any {
@@ -2361,6 +2613,10 @@ func isKiroRecoverableStatus(status int) bool {
 	return status == http.StatusPaymentRequired || status == http.StatusForbidden || status == http.StatusTooManyRequests
 }
 
+func isKiroAuthRefreshStatus(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
 func upstreamErrorMessage(body []byte) string {
 	if len(body) == 0 {
 		return "kiro upstream request failed"
@@ -2385,28 +2641,137 @@ func kiroAPIRegion(account *Account) string {
 		if v := strings.TrimSpace(account.GetCredential("api_region")); v != "" {
 			return v
 		}
-		if v := detectRegionFromProfileARN(account.GetCredential("profile_arn")); v != "" {
-			return v
-		}
 	}
 	return "us-east-1"
 }
 
-func decorateKiroAPIHeaders(req *http.Request, account *Account) {
-	apiRegion := kiroAPIRegion(account)
+func kiroGenerateEndpoints(region string) []kiroEndpoint {
+	if strings.TrimSpace(region) == "" {
+		region = "us-east-1"
+	}
+	return []kiroEndpoint{
+		{
+			URL:    fmt.Sprintf("https://q.%s.amazonaws.com/generateAssistantResponse", region),
+			Origin: "AI_EDITOR",
+			Name:   "Kiro IDE",
+		},
+		{
+			URL:       fmt.Sprintf("https://codewhisperer.%s.amazonaws.com/generateAssistantResponse", region),
+			Origin:    "AI_EDITOR",
+			AmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+			Name:      "CodeWhisperer",
+		},
+		{
+			URL:       fmt.Sprintf("https://q.%s.amazonaws.com/generateAssistantResponse", region),
+			Origin:    "AI_EDITOR",
+			AmzTarget: "AmazonQDeveloperStreamingService.SendMessage",
+			Name:      "AmazonQ",
+		},
+	}
+}
+
+func setKiroPayloadOrigin(payload map[string]any, origin string) {
+	state, _ := payload["conversationState"].(map[string]any)
+	current, _ := state["currentMessage"].(map[string]any)
+	userInput, _ := current["userInputMessage"].(map[string]any)
+	if userInput != nil {
+		userInput["origin"] = origin
+	}
+}
+
+type kiroHeaderValues struct {
+	userAgent    string
+	amzUserAgent string
+	host         string
+}
+
+func decorateKiroStreamingHeaders(req *http.Request, account *Account) {
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Host", fmt.Sprintf("q.%s.amazonaws.com", apiRegion))
-	req.Header.Set("X-Amzn-Codewhisperer-Optout", "true")
 	req.Header.Set("X-Amzn-Kiro-Agent-Mode", "vibe")
-	req.Header.Set("X-Amz-User-Agent", kiroXAmzUserAgent(account))
-	req.Header.Set("User-Agent", kiroUserAgent(account))
+	applyKiroBaseHeaders(req, account, buildKiroHeaderValues(account, requestHost(req), "codewhispererstreaming", kiroStreamingSDKVersion, "m/E"))
 	req.Header.Set("Amz-Sdk-Invocation-Id", uuid.NewString())
 	req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
+}
+
+func decorateKiroRuntimeHeaders(req *http.Request, account *Account) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	applyKiroBaseHeaders(req, account, buildKiroHeaderValues(account, requestHost(req), "codewhispererruntime", kiroRuntimeSDKVersion, "m/N,E"))
+	req.Header.Set("Amz-Sdk-Invocation-Id", uuid.NewString())
+	req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
+}
+
+func decorateKiroAPIHeaders(req *http.Request, account *Account) {
+	decorateKiroStreamingHeaders(req, account)
 	if account != nil {
 		if profileARN := strings.TrimSpace(account.GetCredential("profile_arn")); profileARN != "" {
 			req.Header.Set("X-Amzn-Kiro-Profile-Arn", profileARN)
 		}
 	}
+}
+
+func applyKiroBaseHeaders(req *http.Request, account *Account, values kiroHeaderValues) {
+	req.Header.Set("X-Amzn-Codewhisperer-Optout", "true")
+	req.Header.Set("X-Amz-User-Agent", values.amzUserAgent)
+	req.Header.Set("User-Agent", values.userAgent)
+	if values.host != "" {
+		req.Host = values.host
+	}
+}
+
+func buildKiroHeaderValues(account *Account, host, apiName, sdkVersion, mode string) kiroHeaderValues {
+	machineID := ""
+	if account != nil {
+		machineID = kiroMachineID(account)
+	}
+	userAgent := fmt.Sprintf(
+		"aws-sdk-js/%s ua/2.1 os/%s lang/js md/nodejs#%s api/%s#%s %s KiroIDE-%s",
+		sdkVersion,
+		kiroSystemVersion(account),
+		kiroNodeVersion(account),
+		apiName,
+		sdkVersion,
+		mode,
+		kiroVersion(account),
+	)
+	amzUserAgent := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s", sdkVersion, kiroVersion(account))
+	if machineID != "" {
+		userAgent += "-" + machineID
+		amzUserAgent += "-" + machineID
+	}
+	return kiroHeaderValues{userAgent: userAgent, amzUserAgent: amzUserAgent, host: host}
+}
+
+func requestHost(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	return req.URL.Host
+}
+
+func kiroSystemVersion(account *Account) string {
+	if account != nil {
+		if v := strings.TrimSpace(account.GetCredential("system_version")); v != "" {
+			return v
+		}
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return "win32#10.0.22631"
+	case "darwin":
+		return "darwin#24.6.0"
+	default:
+		return "linux#6.6.87"
+	}
+}
+
+func kiroNodeVersion(account *Account) string {
+	if account != nil {
+		if v := strings.TrimSpace(account.GetCredential("node_version")); v != "" {
+			return v
+		}
+	}
+	return "22.22.0"
 }
 
 func kiroResolveModel(model string) string {
@@ -2458,6 +2823,8 @@ func kiroCanonicalModel(model string) (string, bool) {
 		return "claude-opus-4.6", true
 	case normalized == "claude-opus-4.7":
 		return "claude-opus-4.7", true
+	case normalized == "claude-opus-4.8":
+		return "claude-opus-4.8", true
 	case strings.HasPrefix(normalized, "claude-3.7-sonnet"):
 		return "claude-3.7-sonnet", true
 	default:
@@ -2479,5 +2846,6 @@ func normalizeKiroModelAlias(model string) string {
 	normalized = strings.ReplaceAll(normalized, "claude-sonnet-4-6", "claude-sonnet-4.6")
 	normalized = strings.ReplaceAll(normalized, "claude-opus-4-6", "claude-opus-4.6")
 	normalized = strings.ReplaceAll(normalized, "claude-opus-4-7", "claude-opus-4.7")
+	normalized = regexp.MustCompile(`claude-(opus|sonnet|haiku)-(\d+)-(\d{1,2})\b`).ReplaceAllString(normalized, "claude-$1-$2.$3")
 	return normalized
 }

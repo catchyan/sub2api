@@ -124,7 +124,7 @@ func TestNormalizeKiroJSONCredentialsArrayWithCompanion(t *testing.T) {
 	require.Equal(t, "client-1", cred.Credentials["client_id"])
 	require.Equal(t, "secret-1", cred.Credentials["client_secret"])
 	require.Equal(t, "us-east-1", cred.Credentials["auth_region"])
-	require.Equal(t, "eu-west-1", cred.Credentials["api_region"])
+	require.Equal(t, "us-east-1", cred.Credentials["api_region"])
 	require.Equal(t, "2582956ecc884669b54607adbffcb8942582956ecc884669b54607adbffcb894", cred.Credentials["machine_id"])
 	require.Equal(t, "user@example.com", cred.Credentials["email"])
 }
@@ -187,7 +187,7 @@ func TestBuildKiroPayloadIncludesToolContext(t *testing.T) {
 	require.Len(t, context["tools"], 1)
 
 	tool := context["tools"].([]map[string]any)[0]["toolSpecification"].(map[string]any) //nolint:errcheck
-	require.Equal(t, "Bash", tool["name"])
+	require.Equal(t, "bash", tool["name"])
 }
 
 func TestNormalizeKiroMessagesKeepsAssistantToolUsesStructured(t *testing.T) {
@@ -203,7 +203,7 @@ func TestNormalizeKiroMessagesKeepsAssistantToolUsesStructured(t *testing.T) {
 	assistant := history[1].(map[string]any)["assistantResponseMessage"].(map[string]any) //nolint:errcheck
 	toolUses := assistant["toolUses"].([]map[string]any)                                  //nolint:errcheck
 
-	require.Equal(t, "Bash", toolUses[0]["name"])
+	require.Equal(t, "bash", toolUses[0]["name"])
 	require.Equal(t, "toolu_1", toolUses[0]["toolUseId"])
 	require.NotContains(t, assistant["content"], "tool_use")
 }
@@ -243,6 +243,7 @@ func TestKiroToolNameMapsShortenAndRestore(t *testing.T) {
 	alias := kiroToolNameToKiro(longName, maps)
 	require.NotEqual(t, longName, alias)
 	require.LessOrEqual(t, len(alias), kiroMaxToolNameLength)
+	require.NotContains(t, alias, "_")
 	require.Equal(t, longName, restoreKiroToolName(alias, maps))
 }
 
@@ -263,6 +264,7 @@ func TestBuildKiroPayloadShortensToolNamesForKiro(t *testing.T) {
 	alias := tool["name"].(string)                                                           //nolint:errcheck
 
 	require.LessOrEqual(t, len(alias), kiroMaxToolNameLength)
+	require.NotContains(t, alias, "_")
 	require.NotEqual(t, longName, alias)
 }
 
@@ -402,14 +404,26 @@ func TestKiroResolveModelAliases(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4.5", kiroResolveModel("claude-sonnet-4-5-20250929"))
 	require.Equal(t, "claude-opus-4.5", kiroResolveModel("us.anthropic.claude-opus-4-5-20251101-v1:0"))
 	require.Equal(t, "claude-opus-4.7", kiroResolveModel("claude-opus-4-7"))
+	require.Equal(t, "claude-opus-4.8", kiroResolveModel("claude-opus-4-8"))
 }
 
 func TestKiroTestModelFallsBackForUnsupportedClaudeModels(t *testing.T) {
 	require.Equal(t, "auto-kiro", kiroTestModel(""))
 	require.Equal(t, "claude-opus-4.7", kiroTestModel("claude-opus-4-7"))
+	require.Equal(t, "claude-opus-4.8", kiroTestModel("claude-opus-4-8"))
 	require.Equal(t, "claude-sonnet-4.5", kiroTestModel("claude-sonnet-4-5-20250929"))
 	require.Equal(t, "claude-opus-4.5", kiroTestModel("us.anthropic.claude-opus-4-5-20251101-v1:0"))
 	require.Equal(t, "auto-kiro", kiroTestModel("claude-unknown-5"))
+}
+
+func TestKiroAPIRegionDefaultsToUSEast1EvenWithProfileARN(t *testing.T) {
+	account := &Account{Credentials: map[string]any{
+		"profile_arn": "arn:aws:codewhisperer:eu-west-1:123456789012:profile/test",
+	}}
+	require.Equal(t, "us-east-1", kiroAPIRegion(account))
+
+	account.Credentials["api_region"] = "eu-west-1"
+	require.Equal(t, "eu-west-1", kiroAPIRegion(account))
 }
 
 func TestKiroDefaultModelsUseKiroModelIDs(t *testing.T) {

@@ -165,7 +165,7 @@ func NormalizeKiroRefreshToken(req KiroCredentialImportRequest) (KiroNormalizedC
 		return KiroNormalizedCredential{}, err
 	}
 	authRegion := defaultKiroRegion(kiroFirstNonEmpty(req.AuthRegion, req.Region))
-	apiRegion := defaultKiroRegion(kiroFirstNonEmpty(req.APIRegion, detectRegionFromProfileARN(req.ProfileARN)))
+	apiRegion := defaultKiroRegion(req.APIRegion)
 	machineID := resolveKiroMachineID(req.MachineID, refreshToken)
 	credentials := map[string]any{
 		"source_type":   KiroSourceRefreshToken,
@@ -333,9 +333,6 @@ func NormalizeKiroSQLiteCredential(ctx context.Context, path string, req KiroCre
 			}
 		}
 	}
-	if apiRegion := detectKiroAPIRegionFromSQLite(ctx, db); apiRegion != "" && req.APIRegion == "" {
-		req.APIRegion = apiRegion
-	}
 	cred, err := normalizeKiroCredentialMap(tokenData, KiroSourceSQLite, req)
 	if err != nil {
 		return KiroNormalizedCredential{}, err
@@ -356,7 +353,7 @@ func normalizeKiroCredentialMap(data map[string]any, sourceType string, req Kiro
 	profileARN := kiroFirstNonEmpty(kiroString(data["profileArn"]), kiroString(data["profile_arn"]), req.ProfileARN)
 	region := defaultKiroRegion(kiroFirstNonEmpty(kiroString(data["region"]), kiroString(data["ssoRegion"]), kiroString(data["sso_region"]), req.Region))
 	authRegion := defaultKiroRegion(kiroFirstNonEmpty(kiroString(data["authRegion"]), kiroString(data["auth_region"]), req.AuthRegion, region))
-	apiRegion := defaultKiroRegion(kiroFirstNonEmpty(req.APIRegion, kiroString(data["apiRegion"]), kiroString(data["api_region"]), detectRegionFromProfileARN(profileARN), region))
+	apiRegion := defaultKiroRegion(kiroFirstNonEmpty(req.APIRegion, kiroString(data["apiRegion"]), kiroString(data["api_region"])))
 	clientID := kiroFirstNonEmpty(kiroString(data["clientId"]), kiroString(data["client_id"]), req.ClientID)
 	clientSecret := kiroFirstNonEmpty(kiroString(data["clientSecret"]), kiroString(data["client_secret"]), req.ClientSecret)
 	clientIDHash := kiroFirstNonEmpty(kiroString(data["clientIdHash"]), kiroString(data["client_id_hash"]))

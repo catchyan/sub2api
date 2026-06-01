@@ -219,7 +219,7 @@ func kiroVersion(account *Account) string {
 			return v
 		}
 	}
-	return "0.7.45"
+	return "0.11.107"
 }
 
 func kiroMachineID(account *Account) string {
@@ -235,9 +235,11 @@ func kiroMachineID(account *Account) string {
 }
 
 func kiroXAmzUserAgent(account *Account) string {
-	return fmt.Sprintf("aws-sdk-js/1.0.34 KiroIDE-%s-%s", kiroVersion(account), kiroMachineID(account))
+	values := buildKiroHeaderValues(account, "", "codewhispererstreaming", kiroStreamingSDKVersion, "m/E")
+	return values.amzUserAgent
 }
 
 func kiroUserAgent(account *Account) string {
-	return fmt.Sprintf("aws-sdk-js/1.0.34 ua/2.1 os/Windows_NT lang/js md/nodejs#24.0.0 api/codewhispererstreaming#1.0.34 m/E KiroIDE-%s-%s", kiroVersion(account), kiroMachineID(account))
+	values := buildKiroHeaderValues(account, "", "codewhispererstreaming", kiroStreamingSDKVersion, "m/E")
+	return values.userAgent
 }

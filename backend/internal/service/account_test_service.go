@@ -228,7 +228,7 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusForbidden {
+	if isKiroAuthRefreshStatus(resp.StatusCode) {
 		_ = s.kiroTokenProvider.Refresh(ctx, account)
 		_ = resp.Body.Close()
 		resp, err = gateway.callGenerate(ctx, account, payload)
