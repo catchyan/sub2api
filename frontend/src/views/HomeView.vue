@@ -9,232 +9,178 @@
     <div v-else v-html="homeContent"></div>
   </div>
 
-  <div v-else class="home-shell min-h-screen bg-[#fbfaf7] text-zinc-950 dark:bg-[#08090a] dark:text-white">
-    <header class="sticky top-0 z-30 border-b border-zinc-200/80 bg-[#fbfaf7]/90 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#08090a]/86">
-      <nav class="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <div class="flex min-w-0 items-center gap-3">
-          <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
-            <img :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <div class="min-w-0">
-            <div class="truncate text-sm font-semibold text-zinc-950 dark:text-white">{{ siteName }}</div>
-            <div class="hidden text-xs text-zinc-500 dark:text-zinc-400 sm:block">{{ copy.navSubtle }}</div>
-          </div>
-        </div>
+  <div v-else class="home-shell">
+    <header class="home-header">
+      <nav class="home-nav">
+        <router-link to="/" class="home-brand" aria-label="Home">
+          <span class="home-logo">
+            <img :src="siteLogo || '/logo.png'" alt="Logo" />
+          </span>
+          <span class="home-brand-copy">
+            <span>{{ siteName }}</span>
+            <small>Gateway Console</small>
+          </span>
+        </router-link>
 
-        <div class="flex items-center gap-2">
+        <div class="home-actions">
           <LocaleSwitcher />
           <a
             v-if="docUrl"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white"
+            class="home-icon-action"
             :title="t('home.viewDocs')"
           >
-            <Icon name="book" size="sm" />
+            <Icon name="book" size="md" />
           </a>
           <button
-            @click="toggleTheme"
-            class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white"
+            class="home-icon-action"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
+            @click="toggleTheme"
           >
-            <Icon v-if="isDark" name="sun" size="sm" />
-            <Icon v-else name="moon" size="sm" />
+            <Icon v-if="isDark" name="sun" size="md" />
+            <Icon v-else name="moon" size="md" />
           </button>
           <router-link
             :to="isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex h-9 items-center rounded-lg bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+            class="home-login-link"
           >
+            <span v-if="isAuthenticated" class="home-user-dot">{{ userInitial }}</span>
             {{ isAuthenticated ? t('home.dashboard') : t('home.login') }}
+            <Icon name="arrowRight" size="sm" />
           </router-link>
         </div>
       </nav>
     </header>
 
     <main>
-      <section class="mx-auto grid max-w-7xl gap-12 px-5 pb-16 pt-14 md:pb-20 md:pt-20 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
-        <div class="max-w-3xl">
-          <div class="mb-6 inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white/75 px-3 py-1.5 text-xs font-medium text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/[0.05] dark:text-zinc-300">
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]"></span>
-            {{ copy.eyebrow }}
+      <section class="home-hero">
+        <div class="home-hero-copy">
+          <div class="home-kicker">
+            <Icon name="sparkles" size="sm" />
+            <span>{{ t('home.tags.subscriptionToApi') }}</span>
           </div>
-
-          <h1 class="max-w-3xl text-5xl font-semibold leading-[1.02] text-zinc-950 dark:text-white md:text-7xl">
-            {{ copy.headline }}
-          </h1>
-          <p class="mt-7 max-w-2xl text-lg leading-8 text-zinc-600 dark:text-zinc-300 md:text-xl md:leading-9">
-            {{ siteSubtitle }}
-          </p>
-          <p class="mt-4 max-w-2xl text-sm leading-7 text-zinc-500 dark:text-zinc-400 md:text-base">
-            {{ copy.supporting }}
-          </p>
-
-          <div class="mt-10 flex flex-col gap-3 sm:flex-row">
-            <router-link
-              :to="isAuthenticated ? dashboardPath : '/login'"
-              class="inline-flex h-12 items-center justify-center rounded-lg bg-zinc-950 px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
-            >
-              {{ isAuthenticated ? copy.primaryAuthed : copy.primaryAction }}
-              <Icon name="arrowRight" size="sm" class="ml-2" :stroke-width="2" />
+          <h1>{{ siteName }}</h1>
+          <p>{{ siteSubtitle }}</p>
+          <div class="home-cta-row">
+            <router-link :to="isAuthenticated ? dashboardPath : '/login'" class="btn btn-primary btn-lg">
+              {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
+              <Icon name="arrowRight" size="md" />
             </router-link>
             <a
               v-if="docUrl"
               :href="docUrl"
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex h-12 items-center justify-center rounded-lg border border-zinc-200 bg-white/70 px-5 text-sm font-medium text-zinc-800 shadow-sm transition-colors hover:bg-white dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-100 dark:hover:bg-white/10"
+              class="btn btn-secondary btn-lg"
             >
-              <Icon name="book" size="sm" class="mr-2" />
-              {{ copy.secondaryAction }}
+              {{ t('home.docs') }}
+              <Icon name="externalLink" size="sm" />
             </a>
           </div>
-
-          <div class="mt-12 grid max-w-2xl grid-cols-2 gap-0 overflow-hidden rounded-lg border border-zinc-200 bg-white/65 shadow-sm dark:border-white/10 dark:bg-white/[0.04] sm:grid-cols-4">
-            <div
-              v-for="metric in metrics"
-              :key="metric.label"
-              class="border-r border-t border-zinc-200 px-4 py-4 first:border-t-0 odd:border-r sm:border-t-0 sm:last:border-r-0 dark:border-white/10"
-            >
-              <div class="text-lg font-semibold text-zinc-950 dark:text-white md:text-xl">{{ metric.value }}</div>
-              <div class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">{{ metric.label }}</div>
-            </div>
-          </div>
         </div>
 
-        <div class="token-board overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/[0.08] dark:border-white/10 dark:bg-[#101113] dark:shadow-black/40">
-          <div class="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-white/10">
-            <div>
-              <p class="text-sm font-semibold text-zinc-950 dark:text-white">{{ copy.panelTitle }}</p>
-              <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ copy.panelSubtitle }}</p>
+        <div class="home-command-center" aria-label="Gateway overview">
+          <div class="command-topline">
+            <span class="status-pill">
+              <span></span>
+              Live routing
+            </span>
+            <span>sub2api.edge</span>
+          </div>
+          <div class="flow-map">
+            <div class="flow-node is-source">
+              <Icon name="terminal" size="lg" />
+              <span>Client</span>
             </div>
-            <div class="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
-              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-              {{ copy.operational }}
+            <div class="flow-rail">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="flow-node is-core">
+              <Icon name="cpu" size="xl" />
+              <span>Policy Engine</span>
+            </div>
+            <div class="flow-rail">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="flow-node is-target">
+              <Icon name="cloud" size="lg" />
+              <span>Upstream</span>
             </div>
           </div>
-
-          <div class="grid border-b border-zinc-200 dark:border-white/10 md:grid-cols-[1fr_0.72fr]">
-            <div class="border-b border-zinc-200 p-5 dark:border-white/10 md:border-b-0 md:border-r">
-              <div class="mb-4 flex items-center justify-between">
-                <span class="text-xs font-medium uppercase text-zinc-400">{{ copy.qualityTitle }}</span>
-                <span class="font-mono text-xs text-zinc-400">live</span>
-              </div>
-              <div class="rounded-lg border border-zinc-200 bg-[#fbfaf7] p-4 dark:border-white/10 dark:bg-black/20">
-                <div class="mb-3 flex items-center justify-between text-xs">
-                  <span class="font-mono text-zinc-500 dark:text-zinc-400">POST /v1/chat/completions</span>
-                  <span class="rounded-md bg-emerald-100 px-2 py-1 font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">200 OK</span>
-                </div>
-                <div class="space-y-3">
-                  <div v-for="signal in qualitySignals" :key="signal.name">
-                    <div class="mb-2 flex items-center justify-between gap-3">
-                      <span class="text-sm font-medium text-zinc-800 dark:text-zinc-100">{{ signal.name }}</span>
-                      <span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">{{ signal.value }}</span>
-                    </div>
-                    <div class="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-white/10">
-                      <div class="h-full rounded-full" :class="signal.accent" :style="{ width: signal.width }"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                <div v-for="promise in promises" :key="promise.title" class="rounded-lg border border-zinc-200 bg-white/70 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                  <Icon :name="promise.icon" size="sm" class="mb-3 text-zinc-700 dark:text-zinc-200" />
-                  <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">{{ promise.title }}</h2>
-                  <p class="mt-2 text-xs leading-6 text-zinc-500 dark:text-zinc-400">{{ promise.description }}</p>
-                </div>
-              </div>
+          <div class="metric-grid">
+            <div>
+              <span>98.8%</span>
+              <small>availability</small>
             </div>
-
-            <div class="p-5">
-              <div class="mb-4 text-xs font-medium uppercase text-zinc-400">{{ copy.priceTitle }}</div>
-              <div class="rounded-lg border border-zinc-200 bg-[#fbfaf7] p-4 dark:border-white/10 dark:bg-black/20">
-                <div class="flex items-end justify-between gap-3">
-                  <div>
-                    <div class="text-xs text-zinc-500 dark:text-zinc-400">{{ copy.balanceLabel }}</div>
-                    <div class="mt-2 text-3xl font-semibold text-zinc-950 dark:text-white">{{ copy.balanceValue }}</div>
-                  </div>
-                  <div class="text-right text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                    {{ copy.priceNote }}
-                  </div>
-                </div>
-                <div class="mt-5 space-y-3">
-                  <div v-for="item in priceItems" :key="item.label" class="flex items-center justify-between gap-3 text-sm">
-                    <span class="text-zinc-600 dark:text-zinc-400">{{ item.label }}</span>
-                    <span class="font-medium text-zinc-950 dark:text-white">{{ item.value }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mt-4 space-y-4">
-                <div v-for="item in userAssurances" :key="item.label" class="flex items-start gap-3">
-                  <div class="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
-                    <Icon :name="item.icon" size="xs" />
-                  </div>
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-white">{{ item.label }}</div>
-                    <div class="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">{{ item.value }}</div>
-                  </div>
-                </div>
-              </div>
+            <div>
+              <span>42ms</span>
+              <small>routing p50</small>
             </div>
+            <div>
+              <span>24/7</span>
+              <small>monitoring</small>
+            </div>
+          </div>
+          <div class="request-card">
+            <div>
+              <span>POST</span>
+              <strong>/v1/messages</strong>
+            </div>
+            <code>200 OK · sticky session matched</code>
           </div>
         </div>
       </section>
 
-      <section class="border-y border-zinc-200 bg-white/60 dark:border-white/10 dark:bg-white/[0.03]">
-        <div class="mx-auto grid max-w-7xl gap-8 px-5 py-12 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
-          <div>
-            <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400">{{ copy.sectionEyebrow }}</p>
-            <h2 class="mt-3 max-w-md text-2xl font-semibold leading-tight text-zinc-950 dark:text-white md:text-3xl">
-              {{ copy.sectionTitle }}
-            </h2>
-          </div>
-          <div class="grid gap-4 md:grid-cols-4">
-            <article
-              v-for="feature in features"
-              :key="feature.title"
-              class="rounded-lg border border-zinc-200 bg-[#fbfaf7] p-5 shadow-sm dark:border-white/10 dark:bg-[#0c0d0f]"
-            >
-              <Icon :name="feature.icon" size="md" class="mb-5 text-zinc-800 dark:text-zinc-100" />
-              <h3 class="text-base font-semibold text-zinc-950 dark:text-white">{{ feature.title }}</h3>
-              <p class="mt-3 text-sm leading-7 text-zinc-600 dark:text-zinc-400">{{ feature.description }}</p>
-            </article>
-          </div>
+      <section class="home-proof-strip">
+        <div v-for="tag in featureTags" :key="tag.label" class="home-proof-item">
+          <Icon :name="tag.icon" size="md" />
+          <span>{{ tag.label }}</span>
         </div>
       </section>
 
-      <section class="mx-auto max-w-7xl px-5 py-14">
-        <div class="rounded-lg border border-zinc-200 bg-white/70 p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.04] md:p-7">
-          <div class="grid gap-8 lg:grid-cols-[0.74fr_1.26fr] lg:items-center">
-            <div>
-              <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400">{{ copy.compareEyebrow }}</p>
-              <h2 class="mt-3 text-2xl font-semibold text-zinc-950 dark:text-white">{{ copy.compareTitle }}</h2>
-            </div>
-            <div class="grid gap-3 md:grid-cols-3">
-              <div v-for="point in comparePoints" :key="point.title" class="rounded-lg border border-zinc-200 bg-[#fbfaf7] p-4 dark:border-white/10 dark:bg-black/20">
-                <div class="text-sm font-semibold text-zinc-950 dark:text-white">{{ point.title }}</div>
-                <p class="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">{{ point.description }}</p>
-              </div>
-            </div>
+      <section class="home-feature-section">
+        <article v-for="feature in features" :key="feature.title" class="home-feature-card">
+          <div class="home-feature-icon">
+            <Icon :name="feature.icon" size="lg" />
+          </div>
+          <h2>{{ feature.title }}</h2>
+          <p>{{ feature.description }}</p>
+        </article>
+      </section>
+
+      <section class="home-provider-section">
+        <div>
+          <h2>{{ t('home.providers.title') }}</h2>
+          <p>{{ t('home.providers.description') }}</p>
+        </div>
+        <div class="provider-list">
+          <div
+            v-for="provider in providers"
+            :key="provider.name"
+            class="provider-chip"
+            :class="{ 'is-muted': provider.muted }"
+          >
+            <span>{{ provider.initial }}</span>
+            <strong>{{ provider.name }}</strong>
+            <small>{{ provider.status }}</small>
           </div>
         </div>
       </section>
     </main>
 
-    <footer class="border-t border-zinc-200 px-5 py-6 dark:border-white/10">
-      <div class="mx-auto flex max-w-7xl flex-col gap-3 text-sm text-zinc-500 dark:text-zinc-400 sm:flex-row sm:items-center sm:justify-between">
-        <p>&copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}</p>
-        <a
-          v-if="docUrl"
-          :href="docUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="transition-colors hover:text-zinc-950 dark:hover:text-white"
-        >
-          {{ copy.secondaryAction }}
+    <footer class="home-footer">
+      <span>&copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}</span>
+      <div>
+        <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer">
+          {{ t('home.docs') }}
         </a>
+        <a :href="githubUrl" target="_blank" rel="noopener noreferrer">GitHub</a>
       </div>
     </footer>
   </div>
@@ -244,18 +190,17 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
-import { DEFAULT_SITE_NAME } from '@/constants/branding'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || DEFAULT_SITE_NAME)
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '')
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || copy.value.subtitle)
+const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'AI API Gateway Platform')
 const docUrl = computed(() => appStore.cachedPublicSettings?.doc_url || appStore.docUrl || '')
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 
@@ -265,140 +210,50 @@ const isHomeContentUrl = computed(() => {
 })
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
 
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
-const currentYear = computed(() => new Date().getFullYear())
-const isZh = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
-
-const copy = computed(() => isZh.value ? {
-  navSubtle: '给真实使用 Token 的人',
-  eyebrow: '稳定 · 快速 · 不降智 · 价格公道',
-  headline: 'Token 好不好用，体验会说话。',
-  subtitle: '拿到 Token 就能安心接入。响应要快，模型要稳，质量不能被偷偷打折，账单也要看得明白。',
-  supporting: '无论是接到客户端、自动化脚本，还是自己的产品里，你需要的是长期可用、质量一致、成本可控的 AI 访问体验。',
-  primaryAction: '登录使用 Token',
-  primaryAuthed: '查看我的 Token',
-  secondaryAction: '查看文档',
-  panelTitle: 'Token 体验监测',
-  panelSubtitle: '从真实调用角度看速度、质量与费用',
-  operational: '可用',
-  qualityTitle: '调用质量',
-  priceTitle: '价格透明',
-  balanceLabel: '示例余额',
-  balanceValue: '¥ 128.40',
-  priceNote: '按量清晰扣费\n余额实时可查',
-  sectionEyebrow: '用户真正关心什么',
-  sectionTitle: '不是功能多，而是每次调用都靠谱。',
-  compareEyebrow: '使用感',
-  compareTitle: '少一点玄学，多一点确定。',
-  metrics: [
-    { value: '低延迟', label: '请求不拖泥带水' },
-    { value: '原模型', label: '能力不被降级' },
-    { value: '可追踪', label: '用量账单清楚' },
-    { value: '稳可用', label: '高峰也能用' },
-  ],
-  qualitySignals: [
-    { name: '响应速度', value: '128 ms', width: '88%', accent: 'bg-emerald-500' },
-    { name: '模型一致性', value: '原生能力', width: '94%', accent: 'bg-sky-500' },
-    { name: '可用稳定性', value: '在线', width: '91%', accent: 'bg-amber-500' },
-  ],
-  promises: [
-    { icon: 'bolt' as const, title: '请求要快', description: '日常调用不等待，流式响应更顺滑。' },
-    { icon: 'brain' as const, title: '质量不缩水', description: '尽量保持模型能力、上下文和输出质量一致。' },
-    { icon: 'shield' as const, title: '峰值要稳', description: '上游波动时尽量自动切换可用线路。' },
-    { icon: 'dollar' as const, title: '花费看得懂', description: '余额、用量、扣费记录清楚可查。' },
-  ],
-  priceItems: [
-    { label: '今日调用', value: '1,284 次' },
-    { label: '今日消耗', value: '¥ 18.72' },
-    { label: '平均响应', value: '1.2s' },
-  ],
-  userAssurances: [
-    { icon: 'checkCircle' as const, label: '拿来就用', value: '兼容常见客户端和 OpenAI 风格调用。' },
-    { icon: 'chartBar' as const, label: '用量可查', value: '每个 Token 的调用和消耗都能追踪。' },
-    { icon: 'lock' as const, label: '独立隔离', value: '不同用途的 Token 可以分开管理。' },
-  ],
-  features: [
-    { icon: 'server' as const, title: '稳定', description: '线路状态持续监测，尽量避开不可用或异常的上游。' },
-    { icon: 'bolt' as const, title: '快速', description: '减少无意义等待，让对话、工具和自动化流程更顺。' },
-    { icon: 'brain' as const, title: '不降智', description: '关注模型能力一致性，避免体验突然变笨、变短、变敷衍。' },
-    { icon: 'dollar' as const, title: '价格公道', description: '费用和余额明明白白，不靠模糊账单制造焦虑。' },
-  ],
-  comparePoints: [
-    { title: '不想折腾', description: 'Token 能直接接进已有工具，少改配置，少踩坑。' },
-    { title: '不想猜账', description: '消耗、余额、调用记录可查，心里有数。' },
-    { title: '不想被降级', description: '你买的是能力，不是一个看起来能用的空壳。' },
-  ],
-} : {
-  navSubtle: 'For real token users',
-  eyebrow: 'Stable · Fast · No downgrade · Fair pricing',
-  headline: 'A token should feel reliable every time.',
-  subtitle: 'Use your token with confidence. Fast responses, steady models, no quiet quality cuts, and billing you can understand.',
-  supporting: 'Whether you connect a client, an automation, or your own product, you need AI access that stays available, consistent, and cost-aware.',
-  primaryAction: 'Sign in to use token',
-  primaryAuthed: 'View my tokens',
-  secondaryAction: 'View docs',
-  panelTitle: 'Token Experience Monitor',
-  panelSubtitle: 'Speed, quality, and spending from the user side',
-  operational: 'Available',
-  qualityTitle: 'Call quality',
-  priceTitle: 'Transparent pricing',
-  balanceLabel: 'Sample balance',
-  balanceValue: '$ 128.40',
-  priceNote: 'Clear usage\nLive balance',
-  sectionEyebrow: 'What users actually care about',
-  sectionTitle: 'Not more features. Better calls.',
-  compareEyebrow: 'How it should feel',
-  compareTitle: 'Less guesswork. More certainty.',
-  metrics: [
-    { value: 'low-latency', label: 'requests stay quick' },
-    { value: 'original', label: 'model capability kept' },
-    { value: 'traceable', label: 'usage stays clear' },
-    { value: 'steady', label: 'available under load' },
-  ],
-  qualitySignals: [
-    { name: 'Response speed', value: '128 ms', width: '88%', accent: 'bg-emerald-500' },
-    { name: 'Model consistency', value: 'native', width: '94%', accent: 'bg-sky-500' },
-    { name: 'Availability', value: 'online', width: '91%', accent: 'bg-amber-500' },
-  ],
-  promises: [
-    { icon: 'bolt' as const, title: 'Fast requests', description: 'Daily calls should not feel stuck.' },
-    { icon: 'brain' as const, title: 'No quality cuts', description: 'Model ability and output quality should remain consistent.' },
-    { icon: 'shield' as const, title: 'Stable access', description: 'Route around upstream issues when possible.' },
-    { icon: 'dollar' as const, title: 'Clear cost', description: 'Balance, usage, and charges remain understandable.' },
-  ],
-  priceItems: [
-    { label: 'Calls today', value: '1,284' },
-    { label: 'Spent today', value: '$18.72' },
-    { label: 'Avg response', value: '1.2s' },
-  ],
-  userAssurances: [
-    { icon: 'checkCircle' as const, label: 'Ready to use', value: 'Works with common clients and OpenAI-style calls.' },
-    { icon: 'chartBar' as const, label: 'Usage visible', value: 'Each token call and cost can be tracked.' },
-    { icon: 'lock' as const, label: 'Separated tokens', value: 'Different use cases can stay isolated.' },
-  ],
-  features: [
-    { icon: 'server' as const, title: 'Stable', description: 'Continuously watch routes and avoid broken upstreams.' },
-    { icon: 'bolt' as const, title: 'Fast', description: 'Reduce waiting so chats, tools, and automations stay smooth.' },
-    { icon: 'brain' as const, title: 'No downgrade', description: 'Keep model capability consistent instead of silently weakening output.' },
-    { icon: 'dollar' as const, title: 'Fair price', description: 'Clear balance and usage records, without vague billing anxiety.' },
-  ],
-  comparePoints: [
-    { title: 'No friction', description: 'Drop the token into existing tools with fewer configuration changes.' },
-    { title: 'No billing mystery', description: 'Usage, balance, and request records stay visible.' },
-    { title: 'No quiet downgrade', description: 'You pay for capability, not an empty shell that merely connects.' },
-  ],
+const userInitial = computed(() => {
+  const user = authStore.user
+  if (!user || !user.email) return ''
+  return user.email.charAt(0).toUpperCase()
 })
 
-const metrics = computed(() => copy.value.metrics)
-const qualitySignals = computed(() => copy.value.qualitySignals)
-const promises = computed(() => copy.value.promises)
-const priceItems = computed(() => copy.value.priceItems)
-const userAssurances = computed(() => copy.value.userAssurances)
-const features = computed(() => copy.value.features)
-const comparePoints = computed(() => copy.value.comparePoints)
+const currentYear = computed(() => new Date().getFullYear())
+
+const featureTags = computed(() => [
+  { icon: 'swap' as const, label: t('home.tags.subscriptionToApi') },
+  { icon: 'shield' as const, label: t('home.tags.stickySession') },
+  { icon: 'chart' as const, label: t('home.tags.realtimeBilling') },
+])
+
+const features = computed(() => [
+  {
+    icon: 'server' as const,
+    title: t('home.features.unifiedGateway'),
+    description: t('home.features.unifiedGatewayDesc'),
+  },
+  {
+    icon: 'users' as const,
+    title: t('home.features.multiAccount'),
+    description: t('home.features.multiAccountDesc'),
+  },
+  {
+    icon: 'dollar' as const,
+    title: t('home.features.balanceQuota'),
+    description: t('home.features.balanceQuotaDesc'),
+  },
+])
+
+const providers = computed(() => [
+  { initial: 'C', name: t('home.providers.claude'), status: t('home.providers.supported') },
+  { initial: 'G', name: 'GPT', status: t('home.providers.supported') },
+  { initial: 'G', name: t('home.providers.gemini'), status: t('home.providers.supported') },
+  { initial: 'A', name: t('home.providers.antigravity'), status: t('home.providers.supported') },
+  { initial: '+', name: t('home.providers.more'), status: t('home.providers.soon'), muted: true },
+])
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -408,10 +263,7 @@ function toggleTheme() {
 
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
-  if (
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  ) {
+  if (savedTheme !== 'light') {
     isDark.value = true
     document.documentElement.classList.add('dark')
   }
@@ -429,33 +281,671 @@ onMounted(() => {
 
 <style scoped>
 .home-shell {
-  background-image:
-    linear-gradient(rgba(24, 24, 27, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(24, 24, 27, 0.045) 1px, transparent 1px);
-  background-size: 48px 48px;
+  min-height: 100vh;
+  overflow: hidden;
+  color: #17211f;
+  background:
+    linear-gradient(135deg, rgba(250, 252, 249, 0.94), rgba(237, 244, 240, 0.9)),
+    radial-gradient(circle at 18% 18%, rgba(20, 184, 166, 0.15), transparent 30%),
+    radial-gradient(circle at 82% 12%, rgba(251, 191, 36, 0.13), transparent 28%),
+    radial-gradient(circle at 78% 84%, rgba(14, 165, 233, 0.12), transparent 32%);
 }
 
 .dark .home-shell {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
-}
-
-.token-board {
-  position: relative;
-}
-
-.token-board::before {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  content: '';
+  color: #f3f7f5;
   background:
-    linear-gradient(120deg, rgba(16, 185, 129, 0.08), transparent 34%),
-    linear-gradient(240deg, rgba(14, 165, 233, 0.07), transparent 38%);
+    linear-gradient(135deg, rgba(9, 18, 22, 0.97), rgba(15, 24, 28, 0.95)),
+    radial-gradient(circle at 18% 18%, rgba(20, 184, 166, 0.18), transparent 30%),
+    radial-gradient(circle at 82% 12%, rgba(245, 158, 11, 0.12), transparent 28%),
+    radial-gradient(circle at 78% 84%, rgba(56, 189, 248, 0.12), transparent 32%);
 }
 
-.token-board > * {
+.home-header {
   position: relative;
+  z-index: 10;
+  padding: 22px clamp(20px, 4vw, 56px) 0;
+}
+
+.home-nav,
+.home-hero,
+.home-proof-strip,
+.home-feature-section,
+.home-provider-section,
+.home-footer {
+  width: min(1180px, calc(100% - 40px));
+  margin-inline: auto;
+}
+
+.home-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.home-brand,
+.home-actions,
+.home-login-link,
+.home-icon-action,
+.home-kicker,
+.home-proof-item,
+.provider-chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.home-brand {
+  gap: 12px;
+}
+
+.home-logo {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.1);
+}
+
+.dark .home-logo {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.home-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.home-brand-copy span {
+  display: block;
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.home-brand-copy small {
+  display: block;
+  margin-top: 1px;
+  color: #68736f;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.dark .home-brand-copy small {
+  color: #8fa09b;
+}
+
+.home-actions {
+  gap: 10px;
+}
+
+.home-icon-action,
+.home-login-link {
+  min-height: 38px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #24302d;
+  transition: all 0.2s ease;
+}
+
+.home-icon-action {
+  justify-content: center;
+  width: 38px;
+}
+
+.home-login-link {
+  gap: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.home-icon-action:hover,
+.home-login-link:hover {
+  border-color: rgba(13, 148, 136, 0.38);
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f766e;
+}
+
+.dark .home-icon-action,
+.dark .home-login-link {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.64);
+  color: #d8e6e2;
+}
+
+.dark .home-icon-action:hover,
+.dark .home-login-link:hover {
+  border-color: rgba(45, 212, 191, 0.34);
+  background: rgba(30, 41, 59, 0.86);
+  color: #5eead4;
+}
+
+.home-user-dot {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 10px;
+}
+
+.home-hero {
+  display: grid;
+  min-height: min(690px, calc(100vh - 112px));
+  grid-template-columns: minmax(0, 0.95fr) minmax(420px, 1.05fr);
+  align-items: center;
+  gap: clamp(36px, 7vw, 96px);
+  padding: clamp(70px, 10vw, 126px) 0 56px;
+}
+
+.home-kicker {
+  width: fit-content;
+  gap: 8px;
+  margin-bottom: 22px;
+  border: 1px solid rgba(13, 148, 136, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #0f766e;
+  padding: 8px 13px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.dark .home-kicker {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(15, 23, 42, 0.62);
+  color: #5eead4;
+}
+
+.home-hero h1 {
+  max-width: 760px;
+  font-size: clamp(54px, 8vw, 104px);
+  font-weight: 850;
+  line-height: 0.92;
+  letter-spacing: 0;
+}
+
+.home-hero p {
+  max-width: 620px;
+  margin-top: 26px;
+  color: #56635f;
+  font-size: clamp(18px, 2.2vw, 25px);
+  line-height: 1.55;
+}
+
+.dark .home-hero p {
+  color: #a8b8b4;
+}
+
+.home-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 34px;
+}
+
+.home-command-center {
+  position: relative;
+  padding: 24px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(246, 250, 248, 0.7)),
+    repeating-linear-gradient(90deg, rgba(15, 23, 42, 0.04) 0 1px, transparent 1px 86px);
+  box-shadow: 0 34px 90px rgba(15, 23, 42, 0.16);
+}
+
+.dark .home-command-center {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(20, 31, 35, 0.9), rgba(9, 18, 22, 0.74)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 86px);
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.34);
+}
+
+.command-topline,
+.request-card,
+.metric-grid,
+.flow-map {
+  position: relative;
+  z-index: 1;
+}
+
+.command-topline,
+.request-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.command-topline {
+  color: #66736e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f766e;
+}
+
+.status-pill span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #10b981;
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.12);
+}
+
+.flow-map {
+  display: grid;
+  grid-template-columns: 1fr 0.45fr 1.2fr 0.45fr 1fr;
+  align-items: center;
+  gap: 14px;
+  min-height: 280px;
+}
+
+.flow-node {
+  display: grid;
+  min-height: 118px;
+  place-items: center;
+  gap: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #25312e;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.flow-node.is-core {
+  min-height: 172px;
+  border-color: rgba(13, 148, 136, 0.3);
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.96), rgba(14, 116, 144, 0.92));
+  color: #fff;
+  box-shadow: 0 22px 55px rgba(13, 148, 136, 0.26);
+}
+
+.dark .flow-node {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.62);
+  color: #dbe7e4;
+}
+
+.dark .flow-node.is-core {
+  border-color: rgba(94, 234, 212, 0.34);
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.96), rgba(7, 89, 133, 0.92));
+}
+
+.flow-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.flow-rail span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(13, 148, 136, 0.45);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.metric-grid div {
+  padding: 16px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.metric-grid span {
+  display: block;
+  color: #13231f;
+  font-size: 22px;
+  font-weight: 820;
+}
+
+.metric-grid small {
+  display: block;
+  margin-top: 4px;
+  color: #71807b;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.dark .metric-grid div {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.dark .metric-grid span {
+  color: #f3f7f5;
+}
+
+.dark .metric-grid small,
+.dark .command-topline {
+  color: #8fa09b;
+}
+
+.request-card {
+  margin-top: 12px;
+  padding: 15px 16px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 18px;
+  background: #111827;
+  color: #f8fafc;
+}
+
+.request-card span {
+  margin-right: 10px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.16);
+  color: #5eead4;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.request-card strong {
+  font-size: 13px;
+}
+
+.request-card code {
+  color: #fbbf24;
+  font-size: 12px;
+}
+
+.home-proof-strip,
+.home-feature-section,
+.home-provider-section {
+  position: relative;
+  z-index: 2;
+}
+
+.home-proof-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding-bottom: 28px;
+}
+
+.home-proof-item,
+.home-feature-card,
+.home-provider-section {
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
+}
+
+.dark .home-proof-item,
+.dark .home-feature-card,
+.dark .home-provider-section {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.54);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.2);
+}
+
+.home-proof-item {
+  gap: 10px;
+  justify-content: center;
+  border-radius: 18px;
+  padding: 15px;
+  color: #33413d;
+  font-size: 13px;
+  font-weight: 740;
+}
+
+.dark .home-proof-item {
+  color: #d8e6e2;
+}
+
+.home-feature-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  padding: 34px 0;
+}
+
+.home-feature-card {
+  border-radius: 24px;
+  padding: 26px;
+}
+
+.home-feature-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 16px;
+  background: #10211e;
+  color: #fff;
+}
+
+.dark .home-feature-icon {
+  background: #5eead4;
+  color: #06211d;
+}
+
+.home-feature-card h2 {
+  margin-top: 24px;
+  color: #17211f;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.home-feature-card p {
+  margin-top: 10px;
+  color: #60706b;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.dark .home-feature-card h2 {
+  color: #f5f7f6;
+}
+
+.dark .home-feature-card p {
+  color: #9caeaa;
+}
+
+.home-provider-section {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  align-items: center;
+  gap: 28px;
+  margin-top: 20px;
+  margin-bottom: 46px;
+  border-radius: 28px;
+  padding: 30px;
+}
+
+.home-provider-section h2 {
+  color: #17211f;
+  font-size: 28px;
+  font-weight: 830;
+}
+
+.home-provider-section p {
+  margin-top: 9px;
+  color: #60706b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.dark .home-provider-section h2 {
+  color: #f5f7f6;
+}
+
+.dark .home-provider-section p {
+  color: #9caeaa;
+}
+
+.provider-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.provider-chip {
+  gap: 9px;
+  border: 1px solid rgba(13, 148, 136, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 10px 12px;
+}
+
+.provider-chip span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.provider-chip strong {
+  color: #25312e;
+  font-size: 13px;
+}
+
+.provider-chip small {
+  border-radius: 999px;
+  background: rgba(13, 148, 136, 0.1);
+  color: #0f766e;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.provider-chip.is-muted {
+  opacity: 0.62;
+}
+
+.dark .provider-chip {
+  border-color: rgba(45, 212, 191, 0.18);
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.dark .provider-chip strong {
+  color: #edf7f4;
+}
+
+.home-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid rgba(17, 24, 39, 0.1);
+  padding: 26px 0 34px;
+  color: #6b7975;
+  font-size: 13px;
+}
+
+.home-footer div {
+  display: flex;
+  gap: 16px;
+}
+
+.home-footer a {
+  font-weight: 720;
+  transition: color 0.2s ease;
+}
+
+.home-footer a:hover {
+  color: #0f766e;
+}
+
+.dark .home-footer {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #8fa09b;
+}
+
+@media (max-width: 960px) {
+  .home-brand-copy small {
+    display: none;
+  }
+
+  .home-hero {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    padding-top: 74px;
+  }
+
+  .home-command-center {
+    order: -1;
+  }
+
+  .home-proof-strip,
+  .home-feature-section,
+  .home-provider-section {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-list {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .home-nav,
+  .home-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .home-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .home-login-link {
+    margin-left: auto;
+  }
+
+  .home-hero {
+    padding-top: 46px;
+  }
+
+  .home-hero h1 {
+    font-size: 48px;
+  }
+
+  .flow-map {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-rail {
+    transform: rotate(90deg);
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .request-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>
